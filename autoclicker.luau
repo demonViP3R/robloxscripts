@@ -135,7 +135,7 @@ tabIndicator.Size = UDim2.new(0.5, -8, 0, 2)
 tabIndicator.Position = UDim2.new(0, 4, 1, -3)
 tabIndicator.BackgroundColor3 = C.sub
 tabIndicator.BorderSizePixel = 0
-tabIndicator.ZIndex = 2 
+tabIndicator.ZIndex = 2
 tabIndicator.Parent = TabBar
 Instance.new("UICorner", tabIndicator).CornerRadius = UDim.new(1, 0)
 
@@ -325,7 +325,7 @@ local function makeTabBtn(text, order)
 	btn.TextSize = 12
 	btn.Font = Enum.Font.GothamBold
 	btn.LayoutOrder = order
-	btn.Parent = TabBtnContainer 
+	btn.Parent = TabBtnContainer
 	return btn
 end
 
@@ -352,7 +352,6 @@ tabAfk.MouseButton1Click:Connect(function()
 	switchTab("afk")
 end)
 
-
 sectionLabel("Timing", 1, ClickerPanel)
 local delayBox = inputRow("Delay (seconds)", "0.1", 2, ClickerPanel)
 
@@ -373,21 +372,7 @@ sectionLabel("Status", 1, AfkPanel)
 local afkStatusVal = infoRow("State", "Disabled", 2, AfkPanel, C.muted)
 local afkFiredVal = infoRow("Times Fired", "0", 3, AfkPanel, C.sub)
 
-sectionLabel("Info", 4, AfkPanel)
-local infoBox = makeRow(5, AfkPanel, 52)
-local infoText = Instance.new("TextLabel")
-infoText.Size = UDim2.new(1, -20, 1, 0)
-infoText.Position = UDim2.new(0, 10, 0, 0)
-infoText.BackgroundTransparency = 1
-infoText.Text = "Hooks into the Idled event and fires\nVirtualUser to prevent disconnection."
-infoText.TextColor3 = C.muted
-infoText.TextSize = 11
-infoText.Font = Enum.Font.Gotham
-infoText.TextWrapped = true
-infoText.TextXAlignment = Enum.TextXAlignment.Left
-infoText.Parent = infoBox
-
-local afkToggleBtn = makeBtn("Enable Anti-AFK", C.sub, 6, AfkPanel)
+local afkToggleBtn = makeBtn("Enable Anti-AFK", C.sub, 4, AfkPanel)
 
 local afkConnection = nil
 
