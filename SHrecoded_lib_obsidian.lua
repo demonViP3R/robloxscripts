@@ -37,7 +37,7 @@ local isMobile = UIS.TouchEnabled and not UIS.KeyboardEnabled and not UIS.MouseE
 -- ─────────────────────────────────────────────
 -- Sneeky libs + Obsidian
 -- ─────────────────────────────────────────────
-local Drawlib = loadstring(game:HttpGet("https://raw.githubusercontent.com/sneekygoober/sneeky-s-fov-lib/refs/heads/main/lib.luau"))()
+local Drawlib = loadstring(game:HttpGet("https://raw.githubusercontent.com/demonViP3R/robloxscripts/refs/heads/main/drawlib.luau"))()
 
 local ObsidianRepo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
 local Library      = loadstring(game:HttpGet(ObsidianRepo .. "Library.lua"))()
