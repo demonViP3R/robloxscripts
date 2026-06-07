@@ -52,19 +52,42 @@ local function getClosestPlot()
     return closestPlot
 end
 
+
 local MainGroup = Tabs.Main:AddLeftGroupbox("Automation", "settings")
 
 MainGroup:AddToggle("AutoBuy", {
     Text = "Auto Buy",
-    Tooltip = "Automatically buys all dice types",
+    Tooltip = "Automatically buys selected dice types",
     Default = false,
 })
 
+MainGroup:AddDropdown("AutoBuyDice", {
+    Values = diceIds,
+    Default = 1,
+    Multi = true,
+    Text = "Dice to Buy",
+    Tooltip = "Select which dice to auto buy",
+    Searchable = true,
+})
+
+MainGroup:AddDivider()
+
 MainGroup:AddToggle("AutoOpen", {
     Text = "Auto Open",
-    Tooltip = "Automatically rolls all dice types",
+    Tooltip = "Automatically rolls selected dice types",
     Default = false,
 })
+
+MainGroup:AddDropdown("AutoOpenDice", {
+    Values = diceIds,
+    Default = 1,
+    Multi = true,
+    Text = "Dice to Open",
+    Tooltip = "Select which dice to auto open",
+    Searchable = true,
+})
+
+MainGroup:AddDivider()
 
 MainGroup:AddToggle("AutoCollect", {
     Text = "Auto Collect",
@@ -93,6 +116,7 @@ MainGroup:AddToggle("AutoSkip", {
     Tooltip = "Automatically skips the roll animation",
     Default = false,
 })
+
 
 local KeyGroup = Tabs.Main:AddRightGroupbox("Keybinds", "keyboard")
 
@@ -146,12 +170,16 @@ Options.AutoSkipKey:OnClick(function()
     Toggles.AutoSkip:SetValue(not Toggles.AutoSkip.Value)
 end)
 
+
 task.spawn(function()
     while true do
         if Toggles.AutoBuy.Value then
-            for _, diceId in ipairs(diceIds) do
-                Event:FireServer(diceId, false)
-                task.wait(0.1)
+            local selected = Options.AutoBuyDice.Value
+            for diceId, enabled in pairs(selected) do
+                if enabled then
+                    Event:FireServer(diceId, false)
+                    task.wait(0.1)
+                end
             end
         end
         task.wait(0.5)
@@ -161,9 +189,12 @@ end)
 task.spawn(function()
     while true do
         if Toggles.AutoOpen.Value then
-            for _, diceId in ipairs(diceIds) do
-                event2:FireServer(diceId)
-                task.wait(0.1)
+            local selected = Options.AutoOpenDice.Value
+            for diceId, enabled in pairs(selected) do
+                if enabled then
+                    event2:FireServer(diceId)
+                    task.wait(0.1)
+                end
             end
         end
         task.wait(1)
@@ -219,7 +250,6 @@ task.spawn(function()
                 local button = RollGui:FindFirstChild("Holder")
                     and RollGui.Holder:FindFirstChild("Buttons")
                     and RollGui.Holder.Buttons:FindFirstChild("Skip")
-
                 if button then
                     firesignal(button.MouseButton1Click)
                 end
@@ -228,6 +258,7 @@ task.spawn(function()
         task.wait(0.1)
     end
 end)
+
 
 local MenuGroup = Tabs["UI Settings"]:AddLeftGroupbox("Menu", "wrench")
 
