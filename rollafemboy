@@ -1,0 +1,97 @@
+getgenv().roll = false
+getgenv().open = false
+getgenv().autoCollect = false
+
+local UserInputService = game:GetService("UserInputService")
+local Players = game:GetService("Players")
+local Event = game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("ServerBoundBuyDice")
+local event2 = game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("ServerBoundRequestRoll")
+local Plots = workspace:WaitForChild("Interactive"):WaitForChild("Plots")
+
+local function getClosestPlot()
+    local character = Players.LocalPlayer.Character
+    if not character or not character:FindFirstChild("HumanoidRootPart") then return nil end
+    
+    local hrp = character.HumanoidRootPart
+    local closestPlot = nil
+    local closestDistance = math.huge
+
+    for _, plot in ipairs(Plots:GetChildren()) do
+        if plot:FindFirstChild("Slots") then
+            local plotPosition = plot:GetPivot().Position
+            local distance = (hrp.Position - plotPosition).Magnitude
+
+            if distance < closestDistance then
+                closestDistance = distance
+                closestPlot = plot
+            end
+        end
+    end
+
+    return closestPlot
+end
+
+task.spawn(function()
+    while true do
+        if getgenv().roll then
+            Event:FireServer("basic_dice", false)
+        end
+        task.wait(0.5)
+    end
+end)
+
+task.spawn(function()
+    while true do
+        if getgenv().open then
+            local args = {"basic_dice"}
+            event2:FireServer(unpack(args))
+        end
+        task.wait(1)
+    end
+end)
+
+task.spawn(function()
+    while true do
+        if getgenv().autoCollect then
+            local closestPlot = getClosestPlot()
+
+            if closestPlot and closestPlot:FindFirstChild("Slots") then
+                local allSlots = closestPlot.Slots:GetChildren()
+
+                for _, slot in ipairs(allSlots) do
+                    if slot:FindFirstChild("Collecter") and slot.Collecter:FindFirstChild("Button") then
+                        local button = slot.Collecter.Button
+                        local character = Players.LocalPlayer.Character
+
+                        if character and character:FindFirstChild("HumanoidRootPart") then
+                            local hrp = character.HumanoidRootPart
+                            firetouchinterest(hrp, button, true)
+                            task.wait(0.01)
+                            firetouchinterest(hrp, button, false)
+                        end
+                    end
+                end
+            end
+        end
+        task.wait(0.5)
+    end
+end)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+
+    if input.KeyCode == Enum.KeyCode.L then
+        getgenv().roll = not getgenv().roll
+        print("Auto-buy toggled:", getgenv().roll)
+    end
+
+    if input.KeyCode == Enum.KeyCode.K then
+        getgenv().open = not getgenv().open
+        print("Auto-open toggled:", getgenv().open)
+    end
+
+    if input.KeyCode == Enum.KeyCode.J then
+        getgenv().autoCollect = not getgenv().autoCollect
+        print("Auto-Collect toggled:", getgenv().autoCollect)
+    end
+end)
