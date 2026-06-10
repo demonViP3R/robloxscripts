@@ -1,73 +1,363 @@
-getgenv().roll = false
-getgenv().open = false
-getgenv().autoCollect = false
+local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+local Library = loadstring(game:HttpGet(repo .. "Library.lua"))()
+local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
+local SaveManager = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
 
-local UserInputService = game:GetService("UserInputService")
+local Options = Library.Options
+local Toggles = Library.Toggles
+
+local Window = Library:CreateWindow({
+    Title = "spin a femboy",
+    Footer = "by femboystone",
+    ShowCustomCursor = true,
+    NotifySide = "Right",
+})
+
+local Tabs = {
+    Main = Window:AddTab("Main", "dice"),
+    ["UI Settings"] = Window:AddTab("UI Settings", "settings"),
+}
+
 local Players = game:GetService("Players")
-local Event = game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("ServerBoundBuyDice")
-local event2 = game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("ServerBoundRequestRoll")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Event = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("ServerBoundBuyDice")
+local event2 = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("ServerBoundRequestRoll")
+local autoEquipEvent = ReplicatedStorage.Remotes.ServerBoundAutoEquipBest
+local sellEvent = ReplicatedStorage.Remotes.ServerBoundSellCharacter
+local rebirthEvent = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("ServerBoundRequestRebirth")
 local Plots = workspace:WaitForChild("Interactive"):WaitForChild("Plots")
+
+local diceIds = {
+    "all",
+    "basic_dice", "silver_dice", "golden_dice", "platinum_dice", "diamond_dice",
+    "molten_dice", "holy_dice", "emerald_dice", "marble_dice", "galaxy_dice",
+    "fluffy_dice", "neon_dice", "void_dice", "calico_dice", "boykisser_dice",
+    "infinity_dice", "ruby_dice", "aquamarine_dice", "glacial_dice", "pride_dice",
+    "sakura_dice", "pirate_dice", "angel_dice", "newyear_dice", "jade_dice",
+    "rose_dice", "steampunk_dice", "cyber_dice", "lucky_dice", "kaizen", "slayer"
+}
+
+-- All dice ids except the "all" sentinel
+local allDiceIds = {
+    "basic_dice", "silver_dice", "golden_dice", "platinum_dice", "diamond_dice",
+    "molten_dice", "holy_dice", "emerald_dice", "marble_dice", "galaxy_dice",
+    "fluffy_dice", "neon_dice", "void_dice", "calico_dice", "boykisser_dice",
+    "infinity_dice", "ruby_dice", "aquamarine_dice", "glacial_dice", "pride_dice",
+    "sakura_dice", "pirate_dice", "angel_dice", "newyear_dice", "jade_dice",
+    "rose_dice", "steampunk_dice", "cyber_dice", "lucky_dice", "kaizen", "slayer"
+}
+
+local nameToId = {
+    ["Basic Dice"]      = "basic_dice",
+    ["Silver Dice"]     = "silver_dice",
+    ["Golden Dice"]     = "golden_dice",
+    ["Platinum Dice"]   = "platinum_dice",
+    ["Diamond Dice"]    = "diamond_dice",
+    ["Molten Dice"]     = "molten_dice",
+    ["Holy Dice"]       = "holy_dice",
+    ["Emerald Dice"]    = "emerald_dice",
+    ["Marble Dice"]     = "marble_dice",
+    ["Galaxy Dice"]     = "galaxy_dice",
+    ["Fluffy Dice"]     = "fluffy_dice",
+    ["Neon Dice"]       = "neon_dice",
+    ["Void Dice"]       = "void_dice",
+    ["Calico Dice"]     = "calico_dice",
+    ["Boykisser Dice"]  = "boykisser_dice",
+    ["Infinity Dice"]   = "infinity_dice",
+    ["Ruby Dice"]       = "ruby_dice",
+    ["Aquamarine Dice"] = "aquamarine_dice",
+    ["Glacial Dice"]    = "glacial_dice",
+    ["Pride Dice"]      = "pride_dice",
+    ["Sakura Dice"]     = "sakura_dice",
+    ["Pirate Dice"]     = "pirate_dice",
+    ["Angel Dice"]      = "angel_dice",
+    ["New Year Dice"]   = "newyear_dice",
+    ["Jade Dice"]       = "jade_dice",
+    ["Rose Dice"]       = "rose_dice",
+    ["Steampunk Dice"]  = "steampunk_dice",
+    ["Cyber Dice"]      = "cyber_dice",
+    ["Lucky Dice"]      = "lucky_dice",
+    ["Kaizen Dice"]     = "kaizen",
+    ["Slayer Dice"]     = "slayer",
+}
+
+local function getDiceIdFromLabel()
+    local success, result = pcall(function()
+        return Players.LocalPlayer.PlayerGui.MainGui.DiceHolder.MainDiceFrame.DiceButton.DiceNameLabel.Text
+    end)
+    if not success or not result then return nil end
+
+    local id = nameToId[result]
+    if id then return id end
+
+    local formatted = result:lower():gsub("%s+", "_")
+    for _, knownId in ipairs(allDiceIds) do
+        if knownId == formatted then
+            return knownId
+        end
+    end
+
+    return nil
+end
 
 local function getClosestPlot()
     local character = Players.LocalPlayer.Character
     if not character or not character:FindFirstChild("HumanoidRootPart") then return nil end
-    
     local hrp = character.HumanoidRootPart
-    local closestPlot = nil
-    local closestDistance = math.huge
-
+    local closestPlot, closestDistance = nil, math.huge
     for _, plot in ipairs(Plots:GetChildren()) do
         if plot:FindFirstChild("Slots") then
-            local plotPosition = plot:GetPivot().Position
-            local distance = (hrp.Position - plotPosition).Magnitude
-
+            local distance = (hrp.Position - plot:GetPivot().Position).Magnitude
             if distance < closestDistance then
                 closestDistance = distance
                 closestPlot = plot
             end
         end
     end
-
     return closestPlot
 end
 
+local function getSelectedDice(dropdownKey)
+    local selected = Options[dropdownKey].Value
+    if selected["all"] then
+        return allDiceIds
+    end
+    local result = {}
+    for diceId, enabled in pairs(selected) do
+        if enabled then
+            table.insert(result, diceId)
+        end
+    end
+    return result
+end
+
+local MainGroup = Tabs.Main:AddLeftGroupbox("Automation", "settings")
+
+MainGroup:AddToggle("AutoBuy", {
+    Text = "Auto Buy",
+    Tooltip = "Automatically buys selected dice types",
+    Default = false,
+})
+
+MainGroup:AddDropdown("AutoBuyDice", {
+    Values = diceIds,
+    Default = 1,
+    Multi = true,
+    Text = "Dice to Buy",
+    Tooltip = "Select which dice to auto buy (choose 'all' for every type)",
+    Searchable = true,
+})
+
+MainGroup:AddDivider()
+
+MainGroup:AddToggle("AutoOpen", {
+    Text = "Auto Open",
+    Tooltip = "Automatically rolls selected dice types",
+    Default = false,
+})
+
+MainGroup:AddDropdown("AutoOpenDice", {
+    Values = diceIds,
+    Default = 1,
+    Multi = true,
+    Text = "Dice to Open",
+    Tooltip = "Select which dice to auto open (choose 'all' for every type)",
+    Searchable = true,
+})
+
+MainGroup:AddDivider()
+
+MainGroup:AddToggle("SmartRoll", {
+    Text = "Smart Roll",
+    Tooltip = "Reads your current equipped dice and fires the roll remote automatically",
+    Default = false,
+})
+
+MainGroup:AddDivider()
+
+MainGroup:AddToggle("AutoCollect", {
+    Text = "Auto Collect",
+    Tooltip = "Automatically collects from closest plot",
+    Default = false,
+})
+
+MainGroup:AddToggle("AutoSell", {
+    Text = "Auto Sell",
+    Tooltip = "Auto equips best then sells character",
+    Default = false,
+})
+
+MainGroup:AddSlider("AutoSellDelay", {
+    Text = "Auto Sell Delay",
+    Tooltip = "How many minutes to wait between each sell",
+    Default = 1,
+    Min = 0.5,
+    Max = 30,
+    Rounding = 1,
+    Suffix = " min",
+})
+
+MainGroup:AddDivider()
+
+MainGroup:AddToggle("AutoSkip", {
+    Text = "Auto Skip",
+    Tooltip = "Automatically skips the roll animation",
+    Default = false,
+})
+
+MainGroup:AddDivider()
+
+MainGroup:AddToggle("AntiAFK", {
+    Text = "Anti AFK",
+    Tooltip = "Prevents Roblox from kicking you for inactivity",
+    Default = false,
+})
+
+MainGroup:AddDivider()
+
+MainGroup:AddToggle("AutoRebirth", {
+    Text = "Auto Rebirth",
+    Tooltip = "Automatically fires the rebirth remote",
+    Default = false,
+})
+
+local KeyGroup = Tabs.Main:AddRightGroupbox("Keybinds", "keyboard")
+
+KeyGroup:AddLabel("Auto Buy"):AddKeyPicker("AutoBuyKey", {
+    Default = "L",
+    Mode = "Toggle",
+    Text = "Auto Buy",
+})
+
+KeyGroup:AddLabel("Auto Open"):AddKeyPicker("AutoOpenKey", {
+    Default = "K",
+    Mode = "Toggle",
+    Text = "Auto Open",
+})
+
+KeyGroup:AddLabel("Smart Roll"):AddKeyPicker("SmartRollKey", {
+    Default = "N",
+    Mode = "Toggle",
+    Text = "Smart Roll",
+})
+
+KeyGroup:AddLabel("Auto Collect"):AddKeyPicker("AutoCollectKey", {
+    Default = "J",
+    Mode = "Toggle",
+    Text = "Auto Collect",
+})
+
+KeyGroup:AddLabel("Auto Sell"):AddKeyPicker("AutoSellKey", {
+    Default = "H",
+    Mode = "Toggle",
+    Text = "Auto Sell",
+})
+
+KeyGroup:AddLabel("Auto Skip"):AddKeyPicker("AutoSkipKey", {
+    Default = "G",
+    Mode = "Toggle",
+    Text = "Auto Skip",
+})
+
+KeyGroup:AddLabel("Anti AFK"):AddKeyPicker("AntiAFKKey", {
+    Default = "F9",
+    Mode = "Toggle",
+    Text = "Anti AFK",
+})
+
+KeyGroup:AddLabel("Auto Rebirth"):AddKeyPicker("AutoRebirthKey", {
+    Default = "F8",
+    Mode = "Toggle",
+    Text = "Auto Rebirth",
+})
+
+Options.AutoBuyKey:OnClick(function()
+    Toggles.AutoBuy:SetValue(not Toggles.AutoBuy.Value)
+end)
+
+Options.AutoOpenKey:OnClick(function()
+    Toggles.AutoOpen:SetValue(not Toggles.AutoOpen.Value)
+end)
+
+Options.SmartRollKey:OnClick(function()
+    Toggles.SmartRoll:SetValue(not Toggles.SmartRoll.Value)
+end)
+
+Options.AutoCollectKey:OnClick(function()
+    Toggles.AutoCollect:SetValue(not Toggles.AutoCollect.Value)
+end)
+
+Options.AutoSellKey:OnClick(function()
+    Toggles.AutoSell:SetValue(not Toggles.AutoSell.Value)
+end)
+
+Options.AutoSkipKey:OnClick(function()
+    Toggles.AutoSkip:SetValue(not Toggles.AutoSkip.Value)
+end)
+
+Options.AntiAFKKey:OnClick(function()
+    Toggles.AntiAFK:SetValue(not Toggles.AntiAFK.Value)
+end)
+
+Options.AutoRebirthKey:OnClick(function()
+    Toggles.AutoRebirth:SetValue(not Toggles.AutoRebirth.Value)
+end)
+
+-- Auto Buy loop
 task.spawn(function()
     while true do
-        if getgenv().roll then
-            Event:FireServer("basic_dice", false)
+        if Toggles.AutoBuy.Value then
+            for _, diceId in ipairs(getSelectedDice("AutoBuyDice")) do
+                Event:FireServer(diceId, false)
+                task.wait(0.1)
+            end
         end
         task.wait(0.5)
     end
 end)
 
+-- Auto Open loop
 task.spawn(function()
     while true do
-        if getgenv().open then
-            local args = {"basic_dice"}
-            event2:FireServer(unpack(args))
+        if Toggles.AutoOpen.Value then
+            for _, diceId in ipairs(getSelectedDice("AutoOpenDice")) do
+                event2:FireServer(diceId)
+                task.wait(0.1)
+            end
         end
         task.wait(1)
     end
 end)
 
+-- Smart Roll loop
 task.spawn(function()
     while true do
-        if getgenv().autoCollect then
+        if Toggles.SmartRoll.Value then
+            local diceId = getDiceIdFromLabel()
+            if diceId then
+                event2:FireServer(diceId)
+            else
+                warn("[SmartRoll] Could not read dice label or match to a known id")
+            end
+        end
+        task.wait(1)
+    end
+end)
+
+-- Auto Collect loop
+task.spawn(function()
+    while true do
+        if Toggles.AutoCollect.Value then
             local closestPlot = getClosestPlot()
-
             if closestPlot and closestPlot:FindFirstChild("Slots") then
-                local allSlots = closestPlot.Slots:GetChildren()
-
-                for _, slot in ipairs(allSlots) do
+                for _, slot in ipairs(closestPlot.Slots:GetChildren()) do
                     if slot:FindFirstChild("Collecter") and slot.Collecter:FindFirstChild("Button") then
-                        local button = slot.Collecter.Button
                         local character = Players.LocalPlayer.Character
-
                         if character and character:FindFirstChild("HumanoidRootPart") then
                             local hrp = character.HumanoidRootPart
-                            firetouchinterest(hrp, button, true)
+                            firetouchinterest(hrp, slot.Collecter.Button, true)
                             task.wait(0.01)
-                            firetouchinterest(hrp, button, false)
+                            firetouchinterest(hrp, slot.Collecter.Button, false)
                         end
                     end
                 end
@@ -77,21 +367,104 @@ task.spawn(function()
     end
 end)
 
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
-
-    if input.KeyCode == Enum.KeyCode.L then
-        getgenv().roll = not getgenv().roll
-        print("Auto-buy toggled:", getgenv().roll)
-    end
-
-    if input.KeyCode == Enum.KeyCode.K then
-        getgenv().open = not getgenv().open
-        print("Auto-open toggled:", getgenv().open)
-    end
-
-    if input.KeyCode == Enum.KeyCode.J then
-        getgenv().autoCollect = not getgenv().autoCollect
-        print("Auto-Collect toggled:", getgenv().autoCollect)
+-- Auto Sell loop
+task.spawn(function()
+    while true do
+        if Toggles.AutoSell.Value then
+            autoEquipEvent:FireServer()
+            task.wait(0.5)
+            sellEvent:FireServer(true)
+            local delaySeconds = Options.AutoSellDelay.Value * 60
+            local elapsed = 0
+            while elapsed < delaySeconds do
+                task.wait(1)
+                elapsed = elapsed + 1
+                if not Toggles.AutoSell.Value then break end
+            end
+        else
+            task.wait(1)
+        end
     end
 end)
+
+-- Auto Skip loop
+task.spawn(function()
+    while true do
+        if Toggles.AutoSkip.Value then
+            local RollGui = Players.LocalPlayer.PlayerGui:FindFirstChild("RollGui")
+            if RollGui and RollGui.Enabled then
+                local button = RollGui:FindFirstChild("Holder")
+                    and RollGui.Holder:FindFirstChild("Buttons")
+                    and RollGui.Holder.Buttons:FindFirstChild("Skip")
+                if button then
+                    firesignal(button.MouseButton1Click)
+                end
+            end
+        end
+        task.wait(0.1)
+    end
+end)
+
+-- Anti AFK loop
+task.spawn(function()
+    local VirtualUser = game:GetService("VirtualUser")
+    Players.LocalPlayer.Idled:Connect(function()
+        if Toggles.AntiAFK.Value then
+            VirtualUser:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+            task.wait(0.1)
+            VirtualUser:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+        end
+    end)
+end)
+
+-- Auto Rebirth loop
+task.spawn(function()
+    while true do
+        if Toggles.AutoRebirth.Value then
+            rebirthEvent:FireServer()
+        end
+        task.wait(1)
+    end
+end)
+
+-- UI Settings
+local MenuGroup = Tabs["UI Settings"]:AddLeftGroupbox("Menu", "wrench")
+
+MenuGroup:AddToggle("KeybindMenuOpen", {
+    Default = Library.KeybindFrame.Visible,
+    Text = "Open Keybind Menu",
+    Callback = function(value)
+        Library.KeybindFrame.Visible = value
+    end,
+})
+
+MenuGroup:AddToggle("ShowCustomCursor", {
+    Text = "Custom Cursor",
+    Default = true,
+    Callback = function(Value)
+        Library.ShowCustomCursor = Value
+    end,
+})
+
+MenuGroup:AddDivider()
+MenuGroup:AddLabel("Menu bind")
+    :AddKeyPicker("MenuKeybind", { Default = "RightShift", NoUI = true, Text = "Menu keybind" })
+
+MenuGroup:AddButton({
+    Text = "Unload",
+    Func = function()
+        Library:Unload()
+    end,
+})
+
+Library.ToggleKeybind = Options.MenuKeybind
+
+ThemeManager:SetLibrary(Library)
+SaveManager:SetLibrary(Library)
+SaveManager:IgnoreThemeSettings()
+SaveManager:SetIgnoreIndexes({ "MenuKeybind" })
+ThemeManager:SetFolder("DiceScript")
+SaveManager:SetFolder("DiceScript/game")
+SaveManager:BuildConfigSection(Tabs["UI Settings"])
+ThemeManager:ApplyToTab(Tabs["UI Settings"])
+SaveManager:LoadAutoloadConfig()
