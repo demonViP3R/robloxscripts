@@ -7,9 +7,9 @@ local Options = Library.Options
 local Toggles = Library.Toggles
 
 local Window = Library:CreateWindow({
-    Title = "spin a femboy",
-    Footer = "by femboystone",
-    ShowCustomCursor = true,
+    Title = "Spin A Femboy",
+    Footer = "by Femboystone",
+    ShowCustomCursor = false,
     NotifySide = "Right",
 })
 
@@ -18,34 +18,47 @@ local Tabs = {
     ["UI Settings"] = Window:AddTab("UI Settings", "settings"),
 }
 
+-- Services
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Event = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("ServerBoundBuyDice")
-local event2 = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("ServerBoundRequestRoll")
-local autoEquipEvent = ReplicatedStorage.Remotes.ServerBoundAutoEquipBest
-local sellEvent = ReplicatedStorage.Remotes.ServerBoundSellCharacter
-local rebirthEvent = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("ServerBoundRequestRebirth")
+local VirtualUser = game:GetService("VirtualUser")
+local LocalPlayer = Players.LocalPlayer
+
+-- Remotes
+local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+local buyEvent        = Remotes:WaitForChild("ServerBoundBuyDice")
+local rollEvent       = Remotes:WaitForChild("ServerBoundRequestRoll")
+local autoEquipEvent  = Remotes.ServerBoundAutoEquipBest
+local sellEvent       = Remotes.ServerBoundSellCharacter
+local rebirthEvent    = Remotes:WaitForChild("ServerBoundRequestRebirth")
+local hatchEvent      = Remotes:WaitForChild("ServerBoundHatchEgg")
+
 local Plots = workspace:WaitForChild("Interactive"):WaitForChild("Plots")
 
-local diceIds = {
-    "all",
-    "basic_dice", "silver_dice", "golden_dice", "platinum_dice", "diamond_dice",
-    "molten_dice", "holy_dice", "emerald_dice", "marble_dice", "galaxy_dice",
-    "fluffy_dice", "neon_dice", "void_dice", "calico_dice", "boykisser_dice",
-    "infinity_dice", "ruby_dice", "aquamarine_dice", "glacial_dice", "pride_dice",
-    "sakura_dice", "pirate_dice", "angel_dice", "newyear_dice", "jade_dice",
-    "rose_dice", "steampunk_dice", "cyber_dice", "lucky_dice", "kaizen", "slayer"
+-- Egg data
+local allEggs = {
+    "OP Evil Egg",
+    "Evil Egg",
+    "OP Water Egg",
+    "Water Egg",
+    "OP Egg",
+    "Basic Egg",
 }
 
--- All dice ids except the "all" sentinel
+-- Dice data
 local allDiceIds = {
     "basic_dice", "silver_dice", "golden_dice", "platinum_dice", "diamond_dice",
     "molten_dice", "holy_dice", "emerald_dice", "marble_dice", "galaxy_dice",
     "fluffy_dice", "neon_dice", "void_dice", "calico_dice", "boykisser_dice",
     "infinity_dice", "ruby_dice", "aquamarine_dice", "glacial_dice", "pride_dice",
     "sakura_dice", "pirate_dice", "angel_dice", "newyear_dice", "jade_dice",
-    "rose_dice", "steampunk_dice", "cyber_dice", "lucky_dice", "kaizen", "slayer"
+    "rose_dice", "steampunk_dice", "cyber_dice", "lucky_dice", "kaizen", "slayer",
 }
+
+local diceDropdownValues = {"all"}
+for _, id in ipairs(allDiceIds) do
+    table.insert(diceDropdownValues, id)
+end
 
 local nameToId = {
     ["Basic Dice"]      = "basic_dice",
@@ -81,234 +94,127 @@ local nameToId = {
     ["Slayer Dice"]     = "slayer",
 }
 
+-- Helpers
 local function getDiceIdFromLabel()
-    local success, result = pcall(function()
-        return Players.LocalPlayer.PlayerGui.MainGui.DiceHolder.MainDiceFrame.DiceButton.DiceNameLabel.Text
+    local ok, text = pcall(function()
+        return LocalPlayer.PlayerGui.MainGui.DiceHolder.MainDiceFrame.DiceButton.DiceNameLabel.Text
     end)
-    if not success or not result then return nil end
-
-    local id = nameToId[result]
-    if id then return id end
-
-    local formatted = result:lower():gsub("%s+", "_")
-    for _, knownId in ipairs(allDiceIds) do
-        if knownId == formatted then
-            return knownId
-        end
+    if not ok or not text then return nil end
+    if nameToId[text] then return nameToId[text] end
+    local formatted = text:lower():gsub("%s+", "_")
+    for _, id in ipairs(allDiceIds) do
+        if id == formatted then return id end
     end
-
     return nil
 end
 
+-- Collect ALL folders named "Slots" anywhere inside a parent
+local function findAllSlots(parent, results)
+    results = results or {}
+    for _, child in ipairs(parent:GetChildren()) do
+        if child.Name == "Slots" and child:IsA("Folder") then
+            table.insert(results, child)
+        end
+        findAllSlots(child, results)
+    end
+    return results
+end
+
 local function getClosestPlot()
-    local character = Players.LocalPlayer.Character
-    if not character or not character:FindFirstChild("HumanoidRootPart") then return nil end
-    local hrp = character.HumanoidRootPart
-    local closestPlot, closestDistance = nil, math.huge
+    local char = LocalPlayer.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return nil end
+    local hrp = char.HumanoidRootPart
+
+    local closestPlot, minDist = nil, math.huge
     for _, plot in ipairs(Plots:GetChildren()) do
-        if plot:FindFirstChild("Slots") then
-            local distance = (hrp.Position - plot:GetPivot().Position).Magnitude
-            if distance < closestDistance then
-                closestDistance = distance
-                closestPlot = plot
-            end
+        local ok, pivot = pcall(function() return plot:GetPivot().Position end)
+        if ok then
+            local d = (hrp.Position - pivot).Magnitude
+            if d < minDist then minDist = d; closestPlot = plot end
         end
     end
-    return closestPlot
+
+    if not closestPlot then return nil end
+    return #findAllSlots(closestPlot) > 0 and closestPlot or nil
 end
 
 local function getSelectedDice(dropdownKey)
-    local selected = Options[dropdownKey].Value
-    if selected["all"] then
-        return allDiceIds
-    end
+    local opt = Options[dropdownKey]
+    if not opt then return {} end
+    local selected = opt.Value
+    if selected["all"] then return allDiceIds end
     local result = {}
-    for diceId, enabled in pairs(selected) do
-        if enabled then
-            table.insert(result, diceId)
-        end
+    for id, enabled in pairs(selected) do
+        if enabled then table.insert(result, id) end
     end
     return result
 end
 
+-- UI: Main tab
 local MainGroup = Tabs.Main:AddLeftGroupbox("Automation", "settings")
 
-MainGroup:AddToggle("AutoBuy", {
-    Text = "Auto Buy",
-    Tooltip = "Automatically buys selected dice types",
-    Default = false,
-})
-
-MainGroup:AddDropdown("AutoBuyDice", {
-    Values = diceIds,
-    Default = 1,
-    Multi = true,
-    Text = "Dice to Buy",
-    Tooltip = "Select which dice to auto buy (choose 'all' for every type)",
-    Searchable = true,
-})
-
+MainGroup:AddToggle("AutoBuy",   { Text = "Auto Buy",     Tooltip = "Automatically buys selected dice types",                 Default = false })
+MainGroup:AddDropdown("AutoBuyDice", { Values = diceDropdownValues, Default = 1, Multi = true, Text = "Dice to Buy",   Tooltip = "Select which dice to auto buy ('all' = every type)", Searchable = true })
 MainGroup:AddDivider()
 
-MainGroup:AddToggle("AutoOpen", {
-    Text = "Auto Open",
-    Tooltip = "Automatically rolls selected dice types",
-    Default = false,
-})
-
-MainGroup:AddDropdown("AutoOpenDice", {
-    Values = diceIds,
-    Default = 1,
-    Multi = true,
-    Text = "Dice to Open",
-    Tooltip = "Select which dice to auto open (choose 'all' for every type)",
-    Searchable = true,
-})
-
+MainGroup:AddToggle("AutoOpen",  { Text = "Auto Open",    Tooltip = "Automatically rolls selected dice types",                Default = false })
+MainGroup:AddDropdown("AutoOpenDice", { Values = diceDropdownValues, Default = 1, Multi = true, Text = "Dice to Open", Tooltip = "Select which dice to auto open ('all' = every type)", Searchable = true })
 MainGroup:AddDivider()
 
-MainGroup:AddToggle("SmartRoll", {
-    Text = "Smart Roll",
-    Tooltip = "Reads your current equipped dice and fires the roll remote automatically",
-    Default = false,
-})
-
+MainGroup:AddToggle("SmartRoll", { Text = "Smart Roll",   Tooltip = "Reads equipped dice and fires roll remote automatically", Default = false })
 MainGroup:AddDivider()
 
-MainGroup:AddToggle("AutoCollect", {
-    Text = "Auto Collect",
-    Tooltip = "Automatically collects from closest plot",
-    Default = false,
-})
-
-MainGroup:AddToggle("AutoSell", {
-    Text = "Auto Sell",
-    Tooltip = "Auto equips best then sells character",
-    Default = false,
-})
-
+MainGroup:AddToggle("AutoCollect", { Text = "Auto Collect", Tooltip = "Automatically collects from closest plot", Default = false })
+MainGroup:AddToggle("AutoSell",    { Text = "Auto Sell",    Tooltip = "Auto equips best then sells character",    Default = false })
 MainGroup:AddSlider("AutoSellDelay", {
-    Text = "Auto Sell Delay",
-    Tooltip = "How many minutes to wait between each sell",
-    Default = 1,
-    Min = 0.5,
-    Max = 30,
-    Rounding = 1,
-    Suffix = " min",
+    Text = "Auto Sell Delay", Tooltip = "Minutes to wait between each sell",
+    Default = 1, Min = 0.5, Max = 30, Rounding = 1, Suffix = " min",
 })
-
 MainGroup:AddDivider()
 
-MainGroup:AddToggle("AutoSkip", {
-    Text = "Auto Skip",
-    Tooltip = "Automatically skips the roll animation",
-    Default = false,
-})
-
+MainGroup:AddToggle("AutoHatch", { Text = "Auto Hatch",   Tooltip = "Automatically hatches the selected egg",    Default = false })
+MainGroup:AddDropdown("AutoHatchEgg", { Values = allEggs, Default = 1, Multi = false, Text = "Egg to Hatch", Tooltip = "Select which egg to auto hatch", Searchable = false })
 MainGroup:AddDivider()
 
-MainGroup:AddToggle("AntiAFK", {
-    Text = "Anti AFK",
-    Tooltip = "Prevents Roblox from kicking you for inactivity",
-    Default = false,
-})
-
+MainGroup:AddToggle("AutoSkip",   { Text = "Auto Skip",   Tooltip = "Automatically skips the roll animation",    Default = false })
 MainGroup:AddDivider()
+MainGroup:AddToggle("AntiAFK",    { Text = "Anti AFK",    Tooltip = "Prevents Roblox from kicking for inactivity", Default = false })
+MainGroup:AddDivider()
+MainGroup:AddToggle("AutoRebirth",{ Text = "Auto Rebirth", Tooltip = "Automatically fires the rebirth remote",   Default = false })
 
-MainGroup:AddToggle("AutoRebirth", {
-    Text = "Auto Rebirth",
-    Tooltip = "Automatically fires the rebirth remote",
-    Default = false,
-})
-
+-- UI: Keybinds
 local KeyGroup = Tabs.Main:AddRightGroupbox("Keybinds", "keyboard")
 
-KeyGroup:AddLabel("Auto Buy"):AddKeyPicker("AutoBuyKey", {
-    Default = "L",
-    Mode = "Toggle",
-    Text = "Auto Buy",
-})
+local keybindConfig = {
+    { toggle = "AutoBuy",    key = "AutoBuyKey",    default = "L",  label = "Auto Buy"    },
+    { toggle = "AutoOpen",   key = "AutoOpenKey",   default = "K",  label = "Auto Open"   },
+    { toggle = "SmartRoll",  key = "SmartRollKey",  default = "N",  label = "Smart Roll"  },
+    { toggle = "AutoCollect",key = "AutoCollectKey",default = "J",  label = "Auto Collect"},
+    { toggle = "AutoSell",   key = "AutoSellKey",   default = "H",  label = "Auto Sell"   },
+    { toggle = "AutoHatch",  key = "AutoHatchKey",  default = "U",  label = "Auto Hatch"  },
+    { toggle = "AutoSkip",   key = "AutoSkipKey",   default = "G",  label = "Auto Skip"   },
+    { toggle = "AntiAFK",    key = "AntiAFKKey",    default = "F9", label = "Anti AFK"    },
+    { toggle = "AutoRebirth",key = "AutoRebirthKey",default = "F8", label = "Auto Rebirth"},
+}
 
-KeyGroup:AddLabel("Auto Open"):AddKeyPicker("AutoOpenKey", {
-    Default = "K",
-    Mode = "Toggle",
-    Text = "Auto Open",
-})
+for _, cfg in ipairs(keybindConfig) do
+    KeyGroup:AddLabel(cfg.label):AddKeyPicker(cfg.key, {
+        Default = cfg.default, Mode = "Toggle", Text = cfg.label,
+    })
+end
 
-KeyGroup:AddLabel("Smart Roll"):AddKeyPicker("SmartRollKey", {
-    Default = "N",
-    Mode = "Toggle",
-    Text = "Smart Roll",
-})
+for _, cfg in ipairs(keybindConfig) do
+    Options[cfg.key]:OnClick(function()
+        Toggles[cfg.toggle]:SetValue(not Toggles[cfg.toggle].Value)
+    end)
+end
 
-KeyGroup:AddLabel("Auto Collect"):AddKeyPicker("AutoCollectKey", {
-    Default = "J",
-    Mode = "Toggle",
-    Text = "Auto Collect",
-})
-
-KeyGroup:AddLabel("Auto Sell"):AddKeyPicker("AutoSellKey", {
-    Default = "H",
-    Mode = "Toggle",
-    Text = "Auto Sell",
-})
-
-KeyGroup:AddLabel("Auto Skip"):AddKeyPicker("AutoSkipKey", {
-    Default = "G",
-    Mode = "Toggle",
-    Text = "Auto Skip",
-})
-
-KeyGroup:AddLabel("Anti AFK"):AddKeyPicker("AntiAFKKey", {
-    Default = "F9",
-    Mode = "Toggle",
-    Text = "Anti AFK",
-})
-
-KeyGroup:AddLabel("Auto Rebirth"):AddKeyPicker("AutoRebirthKey", {
-    Default = "F8",
-    Mode = "Toggle",
-    Text = "Auto Rebirth",
-})
-
-Options.AutoBuyKey:OnClick(function()
-    Toggles.AutoBuy:SetValue(not Toggles.AutoBuy.Value)
-end)
-
-Options.AutoOpenKey:OnClick(function()
-    Toggles.AutoOpen:SetValue(not Toggles.AutoOpen.Value)
-end)
-
-Options.SmartRollKey:OnClick(function()
-    Toggles.SmartRoll:SetValue(not Toggles.SmartRoll.Value)
-end)
-
-Options.AutoCollectKey:OnClick(function()
-    Toggles.AutoCollect:SetValue(not Toggles.AutoCollect.Value)
-end)
-
-Options.AutoSellKey:OnClick(function()
-    Toggles.AutoSell:SetValue(not Toggles.AutoSell.Value)
-end)
-
-Options.AutoSkipKey:OnClick(function()
-    Toggles.AutoSkip:SetValue(not Toggles.AutoSkip.Value)
-end)
-
-Options.AntiAFKKey:OnClick(function()
-    Toggles.AntiAFK:SetValue(not Toggles.AntiAFK.Value)
-end)
-
-Options.AutoRebirthKey:OnClick(function()
-    Toggles.AutoRebirth:SetValue(not Toggles.AutoRebirth.Value)
-end)
-
--- Auto Buy loop
-task.spawn(function()
+-- Automation loops
+task.spawn(function()  -- Auto Buy
     while true do
         if Toggles.AutoBuy.Value then
-            for _, diceId in ipairs(getSelectedDice("AutoBuyDice")) do
-                Event:FireServer(diceId, false)
+            for _, id in ipairs(getSelectedDice("AutoBuyDice")) do
+                buyEvent:FireServer(id, false)
                 task.wait(0.1)
             end
         end
@@ -316,12 +222,11 @@ task.spawn(function()
     end
 end)
 
--- Auto Open loop
-task.spawn(function()
+task.spawn(function()  -- Auto Open
     while true do
         if Toggles.AutoOpen.Value then
-            for _, diceId in ipairs(getSelectedDice("AutoOpenDice")) do
-                event2:FireServer(diceId)
+            for _, id in ipairs(getSelectedDice("AutoOpenDice")) do
+                rollEvent:FireServer(id)
                 task.wait(0.1)
             end
         end
@@ -329,35 +234,38 @@ task.spawn(function()
     end
 end)
 
--- Smart Roll loop
-task.spawn(function()
+task.spawn(function()  -- Smart Roll
     while true do
         if Toggles.SmartRoll.Value then
-            local diceId = getDiceIdFromLabel()
-            if diceId then
-                event2:FireServer(diceId)
+            local id = getDiceIdFromLabel()
+            if id then
+                rollEvent:FireServer(id)
             else
-                warn("[SmartRoll] Could not read dice label or match to a known id")
+                warn("[SmartRoll] Could not read dice label or match a known id")
             end
         end
-        task.wait(1)
+        task.wait(0.7)
     end
 end)
 
--- Auto Collect loop
-task.spawn(function()
+task.spawn(function()  -- Auto Collect
     while true do
         if Toggles.AutoCollect.Value then
-            local closestPlot = getClosestPlot()
-            if closestPlot and closestPlot:FindFirstChild("Slots") then
-                for _, slot in ipairs(closestPlot.Slots:GetChildren()) do
-                    if slot:FindFirstChild("Collecter") and slot.Collecter:FindFirstChild("Button") then
-                        local character = Players.LocalPlayer.Character
-                        if character and character:FindFirstChild("HumanoidRootPart") then
-                            local hrp = character.HumanoidRootPart
-                            firetouchinterest(hrp, slot.Collecter.Button, true)
-                            task.wait(0.01)
-                            firetouchinterest(hrp, slot.Collecter.Button, false)
+            local plot = getClosestPlot()
+            if plot then
+                local char = LocalPlayer.Character
+                local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    for _, slotsFolder in ipairs(findAllSlots(plot)) do
+                        for _, slot in ipairs(slotsFolder:GetChildren()) do
+                            local collecter = slot:FindFirstChild("Collecter", true)
+                            local btn = collecter and collecter:FindFirstChild("Button")
+                            local touch = btn and btn:FindFirstChild("TouchInterest")
+                            if btn and touch then
+                                firetouchinterest(hrp, btn, true)
+                                task.wait(0.01)
+                                firetouchinterest(hrp, btn, false)
+                            end
                         end
                     end
                 end
@@ -367,8 +275,42 @@ task.spawn(function()
     end
 end)
 
--- Auto Sell loop
-task.spawn(function()
+task.spawn(function()  -- Auto Hatch
+    while true do
+        if Toggles.AutoHatch.Value then
+            local egg = Options.AutoHatchEgg.Value
+            if type(egg) == "table" then
+                for k, _ in pairs(egg) do egg = k; break end
+            end
+            if type(egg) == "string" and egg ~= "" then
+                local petName, petMult = nil, nil
+                pcall(function()
+                    local result = hatchEvent:InvokeServer(egg)
+                    for k, v in pairs(result) do
+                        if tostring(k) == "pet" then
+                            for k2, v2 in pairs(v) do
+                                local key = tostring(k2)
+                                local val = tostring(v2)
+                                if key == "Name" then petName = val end
+                                if key == "Multiplier" then petMult = val end
+                            end
+                        end
+                    end
+                end)
+                if petName then
+                    Library:Notify({
+                        Title = "Hatched!",
+                        Content = petName .. " (" .. (petMult or "?") .. "x)",
+                        Duration = 3,
+                    })
+                end
+            end
+        end
+        task.wait(1)
+    end
+end)
+
+task.spawn(function()  -- Auto Sell
     while true do
         if Toggles.AutoSell.Value then
             autoEquipEvent:FireServer()
@@ -376,10 +318,9 @@ task.spawn(function()
             sellEvent:FireServer(true)
             local delaySeconds = Options.AutoSellDelay.Value * 60
             local elapsed = 0
-            while elapsed < delaySeconds do
+            while elapsed < delaySeconds and Toggles.AutoSell.Value do
                 task.wait(1)
-                elapsed = elapsed + 1
-                if not Toggles.AutoSell.Value then break end
+                elapsed += 1
             end
         else
             task.wait(1)
@@ -387,28 +328,23 @@ task.spawn(function()
     end
 end)
 
--- Auto Skip loop
-task.spawn(function()
+task.spawn(function()  -- Auto Skip
     while true do
         if Toggles.AutoSkip.Value then
-            local RollGui = Players.LocalPlayer.PlayerGui:FindFirstChild("RollGui")
+            local RollGui = LocalPlayer.PlayerGui:FindFirstChild("RollGui")
             if RollGui and RollGui.Enabled then
-                local button = RollGui:FindFirstChild("Holder")
+                local skip = RollGui:FindFirstChild("Holder")
                     and RollGui.Holder:FindFirstChild("Buttons")
                     and RollGui.Holder.Buttons:FindFirstChild("Skip")
-                if button then
-                    firesignal(button.MouseButton1Click)
-                end
+                if skip then firesignal(skip.MouseButton1Click) end
             end
         end
         task.wait(0.1)
     end
 end)
 
--- Anti AFK loop
-task.spawn(function()
-    local VirtualUser = game:GetService("VirtualUser")
-    Players.LocalPlayer.Idled:Connect(function()
+task.spawn(function()  -- Anti AFK
+    LocalPlayer.Idled:Connect(function()
         if Toggles.AntiAFK.Value then
             VirtualUser:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
             task.wait(0.1)
@@ -417,8 +353,7 @@ task.spawn(function()
     end)
 end)
 
--- Auto Rebirth loop
-task.spawn(function()
+task.spawn(function()  -- Auto Rebirth
     while true do
         if Toggles.AutoRebirth.Value then
             rebirthEvent:FireServer()
@@ -427,23 +362,18 @@ task.spawn(function()
     end
 end)
 
--- UI Settings
+-- UI Settings tab
 local MenuGroup = Tabs["UI Settings"]:AddLeftGroupbox("Menu", "wrench")
 
 MenuGroup:AddToggle("KeybindMenuOpen", {
     Default = Library.KeybindFrame.Visible,
     Text = "Open Keybind Menu",
-    Callback = function(value)
-        Library.KeybindFrame.Visible = value
-    end,
+    Callback = function(v) Library.KeybindFrame.Visible = v end,
 })
 
 MenuGroup:AddToggle("ShowCustomCursor", {
-    Text = "Custom Cursor",
-    Default = true,
-    Callback = function(Value)
-        Library.ShowCustomCursor = Value
-    end,
+    Text = "Custom Cursor", Default = true,
+    Callback = function(v) Library.ShowCustomCursor = v end,
 })
 
 MenuGroup:AddDivider()
@@ -452,13 +382,11 @@ MenuGroup:AddLabel("Menu bind")
 
 MenuGroup:AddButton({
     Text = "Unload",
-    Func = function()
-        Library:Unload()
-    end,
+    Func = function() Library:Unload() end,
 })
 
+-- Finalize
 Library.ToggleKeybind = Options.MenuKeybind
-
 ThemeManager:SetLibrary(Library)
 SaveManager:SetLibrary(Library)
 SaveManager:IgnoreThemeSettings()
