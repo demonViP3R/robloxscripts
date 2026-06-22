@@ -1,0 +1,1935 @@
+local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+local Library = loadstring(game:HttpGet(repo .. "Library.lua"))()
+local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
+local SaveManager = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
+
+local Options = Library.Options
+local Toggles = Library.Toggles
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+local Lighting = game:GetService("Lighting")
+
+local FOVCircle = Drawing.new("Circle")
+FOVCircle.Visible = false
+FOVCircle.Thickness = 1.5
+FOVCircle.Filled = false
+FOVCircle.Transparency = 1
+FOVCircle.Color = Color3.new(1, 1, 1)
+
+local AimPart = nil
+local AimlockToggleState = false
+
+local LastAttackTime = 0
+
+local ParryWatching = false
+local parryGlareConnection = nil
+local ParryWatcherRunning = false
+
+local originalParryHurtboxSize = nil
+local lastParryHurtboxPart = nil
+
+local extendedHitboxes = {}
+local hitboxExtenderParts = { "Torso_Hurtbox", "Head_Hurtbox", "Handle_Hurtbox" }
+
+local espCache = {}
+
+local rainbowHue = 0
+local chromaWasEnabled = false
+
+local chromaSnapshot = {
+	ambient = nil,
+	outdoorAmbient = nil,
+	fog = nil,
+	colorShiftTop = nil,
+	colorShiftBottom = nil,
+	clouds = {},
+	cameraObjects = {},
+}
+local snapshotTaken = {
+	ambient = false,
+	outdoorAmbient = false,
+	fog = false,
+	colorShift = false,
+	clouds = false,
+	camera = false,
+}
+
+local LastBunnyHopTime = 0
+
+local LastDashTime = 0
+
+local Window = Library:CreateWindow({
+	Title = "REDLINER",
+	Footer = "BY FEMBOYSTONE",
+	NotifySide = "Right",
+	ShowCustomCursor = true,
+})
+
+local Tabs = {
+	Aimbot = Window:AddTab("Aimbot", "crosshair"),
+	Parry = Window:AddTab("Parry", "shield"),
+	ESP = Window:AddTab("ESP", "eye"),
+	Movement = Window:AddTab("Movement", "footprints"),
+	["UI Settings"] = Window:AddTab("UI Settings", "settings"),
+}
+
+local AimGroup = Tabs.Aimbot:AddLeftGroupbox("Aimlock Settings")
+
+AimGroup:AddToggle("AimlockEnabled", {
+	Text = "Enabled",
+	Default = false,
+	Tooltip = "Master toggle for aimlock",
+})
+
+AimGroup:AddDropdown("KeybindMode", {
+	Values = { "Hold", "Toggle" },
+	Default = "Hold",
+	Text = "Keybind Mode",
+	Tooltip = "Hold = aim while key held, Toggle = press key to on/off",
+})
+
+AimGroup:AddLabel("Keybind"):AddKeyPicker("AimlockKey", {
+	Default = "MB2",
+	Mode = "Hold",
+	Text = "Aimlock Key",
+	SyncToggleState = false,
+	NoUI = false,
+})
+
+AimGroup:AddDropdown("TargetPart", {
+	Values = { "Head", "HumanoidRootPart" },
+	Default = "Head",
+	Multi = false,
+	Text = "Target Part",
+	Tooltip = "Which hurtbox to aim at",
+})
+
+AimGroup:AddSlider("FOV", {
+	Text = "Field of View",
+	Default = 150,
+	Min = 10,
+	Max = 600,
+	Rounding = 0,
+	Suffix = "px",
+})
+
+AimGroup:AddSlider("MaxDistance", {
+	Text = "Max Distance",
+	Default = 300,
+	Min = 10,
+	Max = 1000,
+	Rounding = 0,
+	Suffix = "studs",
+})
+
+AimGroup:AddSlider("Smoothing", {
+	Text = "Smoothing",
+	Default = 0.12,
+	Min = 0.01,
+	Max = 1,
+	Rounding = 2,
+})
+
+AimGroup:AddToggle("ShowFOV", {
+	Text = "Show FOV Circle",
+	Default = true,
+	Callback = function(Value)
+		FOVCircle.Visible = Value
+	end,
+})
+
+AimGroup:AddLabel("FOV Color"):AddColorPicker("FOVColor", {
+	Default = Color3.new(1, 1, 1),
+	Title = "FOV Color",
+	Callback = function(Value)
+		if
+			not (
+				Toggles["Eli's mode <3 ;3"]
+				and Toggles["Eli's mode <3 ;3"].Value
+				and Toggles.ChromaFOVCircle
+				and Toggles.ChromaFOVCircle.Value
+			)
+		then
+			FOVCircle.Color = Value
+		end
+	end,
+})
+
+AimGroup:AddToggle("TeamCheck", {
+	Text = "Team Check",
+	Default = true,
+	Tooltip = "Ignore teammates if possible",
+})
+
+AimGroup:AddToggle("WallCheck", {
+	Text = "Wall Check",
+	Default = true,
+	Tooltip = "Only aim at visible targets (not behind walls)",
+})
+
+local StatusLabel = AimGroup:AddLabel("Status: Inactive", false)
+
+local AutoAttackGroup = Tabs.Aimbot:AddRightGroupbox("Auto Attack")
+
+AutoAttackGroup:AddToggle("AutoAttackEnabled", {
+	Text = "Auto Attack",
+	Default = false,
+	Tooltip = "Automatically attacks when close to an entity",
+})
+
+AutoAttackGroup:AddSlider("AutoAttackRange", {
+	Text = "Attack Range",
+	Default = 10,
+	Min = 5,
+	Max = 30,
+	Rounding = 0,
+	Suffix = "studs",
+})
+
+AutoAttackGroup:AddSlider("AutoAttackCooldown", {
+	Text = "Attack Cooldown",
+	Default = 0.3,
+	Min = 0.1,
+	Max = 2,
+	Rounding = 2,
+	Suffix = "s",
+})
+
+local ParryGroup = Tabs.Parry:AddLeftGroupbox("Auto Parry")
+
+ParryGroup:AddToggle("AutoParryEnabled", {
+	Text = "Enabled",
+	Default = false,
+	Tooltip = "Automatically press parry key when a glare appears",
+	Callback = function(Value)
+		if Value then
+			StartParryWatcher()
+		else
+			StopParryWatcher()
+		end
+	end,
+})
+
+ParryGroup:AddLabel("Parry Key"):AddKeyPicker("ParryKey", {
+	Default = "F",
+	Mode = "Press",
+	Text = "Parry Key",
+	NoUI = false,
+})
+
+ParryGroup:AddSlider("MonarchGlareDelay", {
+	Text = "Monarch Glare Delay",
+	Default = 1.5,
+	Min = 0.1,
+	Max = 5,
+	Rounding = 2,
+	Suffix = "s",
+})
+
+ParryGroup:AddSlider("PhoenixGlareDelay", {
+	Text = "Phoenix Glare Delay",
+	Default = 1,
+	Min = 0.1,
+	Max = 5,
+	Rounding = 2,
+	Suffix = "s",
+})
+
+ParryGroup:AddSlider("SiegeGlareDelay", {
+	Text = "Siege Glare Delay",
+	Default = 0.8,
+	Min = 0.1,
+	Max = 5,
+	Rounding = 2,
+	Suffix = "s",
+})
+
+ParryGroup:AddSlider("CrossDelay", {
+	Text = "Cross Delay",
+	Default = 0.5,
+	Min = 0.1,
+	Max = 5,
+	Rounding = 2,
+	Suffix = "s",
+})
+
+ParryGroup:AddSlider("ParryIndicatorDelay", {
+	Text = "Parry Indicator Delay",
+	Default = 0.5,
+	Min = 0.1,
+	Max = 5,
+	Rounding = 2,
+	Suffix = "s",
+})
+
+ParryGroup:AddSlider("SlideAttackDelay", {
+	Text = "Slide Attack Delay",
+	Default = 0.5,
+	Min = 0.1,
+	Max = 5,
+	Rounding = 2,
+	Suffix = "s",
+})
+
+ParryGroup:AddSlider("Attack2Delay", {
+	Text = "Attack2 Delay",
+	Default = 0.5,
+	Min = 0.1,
+	Max = 5,
+	Rounding = 2,
+	Suffix = "s",
+})
+
+ParryGroup:AddSlider("Attack1Delay", {
+	Text = "Attack1 Delay",
+	Default = 0.5,
+	Min = 0.1,
+	Max = 5,
+	Rounding = 2,
+	Suffix = "s",
+})
+
+ParryGroup:AddSlider("3P_RAttackDelay", {
+	Text = "3P_RAttack Delay",
+	Default = 0.5,
+	Min = 0.1,
+	Max = 5,
+	Rounding = 2,
+	Suffix = "s",
+})
+
+ParryGroup:AddSlider("3P_LAttackDelay", {
+	Text = "3P_LAttack Delay",
+	Default = 0.5,
+	Min = 0.1,
+	Max = 5,
+	Rounding = 2,
+	Suffix = "s",
+})
+
+ParryGroup:AddSlider("3P_CAttackDelay", {
+	Text = "3P_CAttack Delay",
+	Default = 0.5,
+	Min = 0.1,
+	Max = 5,
+	Rounding = 2,
+	Suffix = "s",
+})
+
+ParryGroup:AddSlider("DoublePressGap", {
+	Text = "Double Press Gap",
+	Default = 0.3,
+	Min = 0.1,
+	Max = 1,
+	Rounding = 2,
+	Suffix = "s",
+})
+
+ParryGroup:AddToggle("ParryDistanceCheck", {
+	Text = "Distance Check",
+	Default = false,
+	Tooltip = "Only parry if an enemy is within the given distance",
+})
+
+ParryGroup:AddSlider("ParryDistance", {
+	Text = "Parry Distance",
+	Default = 500,
+	Min = 5,
+	Max = 1000,
+	Rounding = 0,
+	Suffix = "studs",
+})
+
+local ParryHitboxGroup = Tabs.Parry:AddRightGroupbox("Parry Hitbox Expansion")
+
+ParryHitboxGroup:AddToggle("ExpandParryHitbox", {
+	Text = "Enabled",
+	Default = false,
+	Tooltip = "Increase the size of your Parry_Hurtbox",
+})
+
+ParryHitboxGroup:AddSlider("ParryHitboxMultiplier", {
+	Text = "Size Multiplier",
+	Default = 2.0,
+	Min = 1.0,
+	Max = 5.0,
+	Rounding = 1,
+	Suffix = "x",
+})
+
+local BunnyHopGroup = Tabs.Movement:AddLeftGroupbox("Bunny Hop")
+
+BunnyHopGroup:AddToggle("BunnyHopEnabled", {
+	Text = "Enabled",
+	Default = false,
+	Tooltip = "Automatically press Ctrl + Space while moving",
+})
+
+BunnyHopGroup:AddSlider("BunnyHopDelay", {
+	Text = "Hop Delay",
+	Default = 0.1,
+	Min = 0.05,
+	Max = 0.5,
+	Rounding = 2,
+	Suffix = "s",
+})
+
+BunnyHopGroup:AddSlider("BunnyHopHoldTime", {
+	Text = "Hold Time",
+	Default = 0.05,
+	Min = 0.01,
+	Max = 0.3,
+	Rounding = 2,
+	Suffix = "s",
+})
+
+BunnyHopGroup:AddSlider("BunnyHopReleaseGap", {
+	Text = "Release Gap",
+	Default = 0.02,
+	Min = 0.0,
+	Max = 0.2,
+	Rounding = 2,
+	Suffix = "s",
+})
+
+local DashGroup = Tabs.Movement:AddLeftGroupbox("Auto Dash")
+
+DashGroup:AddToggle("AutoDashEnabled", {
+	Text = "Enabled",
+	Default = false,
+	Tooltip = "Automatically press dash key while moving",
+})
+
+DashGroup:AddLabel("Dash Key"):AddKeyPicker("DashKey", {
+	Default = "LeftShift",
+	Mode = "Press",
+	Text = "Dash Key",
+	NoUI = false,
+})
+
+DashGroup:AddSlider("DashDelay", {
+	Text = "Dash Delay",
+	Default = 0.2,
+	Min = 0.05,
+	Max = 1,
+	Rounding = 2,
+	Suffix = "s",
+})
+
+local DebugGroup = Tabs.Movement:AddLeftGroupbox("Debug")
+DebugGroup:AddToggle("MovementDebug", {
+	Text = "Debug Prints",
+	Default = false,
+	Tooltip = "Print movement state in console",
+})
+
+local HitboxGroup = Tabs.Movement:AddRightGroupbox("Hitbox Extender")
+
+HitboxGroup:AddToggle("HitboxExtenderEnabled", {
+	Text = "Enabled",
+	Default = false,
+	Tooltip = "Enlarge Torso_Hurtbox, Head_Hurtbox, and Handle_Hurtbox",
+})
+
+HitboxGroup:AddSlider("HitboxExtenderMultiplier", {
+	Text = "Size Multiplier",
+	Default = 2.0,
+	Min = 1.0,
+	Max = 5.0,
+	Rounding = 1,
+	Suffix = "x",
+})
+
+local ESPGroup = Tabs.ESP:AddLeftGroupbox("Player ESP")
+
+ESPGroup:AddToggle("ESPEnabled", {
+	Text = "Enabled",
+	Default = false,
+	Tooltip = "Master toggle for ESP",
+})
+
+ESPGroup:AddToggle("ShowBox", { Text = "Box", Default = true })
+ESPGroup:AddToggle("CornersOnly", { Text = "Corners Only", Default = true })
+ESPGroup:AddToggle("ShowOutline", { Text = "Outline", Default = false })
+ESPGroup:AddToggle("ShowName", { Text = "Name", Default = true })
+ESPGroup:AddToggle("ShowHealth", { Text = "Health Bar", Default = true })
+ESPGroup:AddToggle("ShowHeat", { Text = "Heat Bar", Default = true })
+ESPGroup:AddToggle("ShowImpact", { Text = "Impact Bar", Default = true })
+ESPGroup:AddToggle("ShowTracers", { Text = "Tracers", Default = true })
+ESPGroup:AddToggle("ShowDistance", { Text = "Distance", Default = false })
+ESPGroup:AddToggle("ESPTeamCheck", { Text = "Team Check", Default = true })
+
+ESPGroup:AddLabel("Box Color"):AddColorPicker("BoxColor", {
+	Default = Color3.new(1, 1, 1),
+	Title = "Box Color",
+})
+ESPGroup:AddLabel("Outline Color"):AddColorPicker("OutlineColor", {
+	Default = Color3.new(0, 0, 0),
+	Title = "Outline Color",
+})
+ESPGroup:AddLabel("Tracer Color"):AddColorPicker("TracerColor", {
+	Default = Color3.new(1, 1, 1),
+	Title = "Tracer Color",
+})
+ESPGroup:AddLabel("Name Color"):AddColorPicker("NameColor", {
+	Default = Color3.new(1, 1, 1),
+	Title = "Name Color",
+})
+ESPGroup:AddLabel("Health Full Color"):AddColorPicker("HealthFullColor", {
+	Default = Color3.new(0, 1, 0),
+	Title = "Health Full",
+})
+ESPGroup:AddLabel("Health Low Color"):AddColorPicker("HealthLowColor", {
+	Default = Color3.new(1, 0, 0),
+	Title = "Health Low",
+})
+ESPGroup:AddLabel("Heat Color"):AddColorPicker("HeatColor", {
+	Default = Color3.fromRGB(255, 100, 0),
+	Title = "Heat Color",
+})
+ESPGroup:AddLabel("Impact Color"):AddColorPicker("ImpactColor", {
+	Default = Color3.new(1, 1, 1),
+	Title = "Impact Color",
+})
+
+local ESPGroup2 = Tabs.ESP:AddRightGroupbox("Display Settings")
+
+ESPGroup2:AddSlider("TracerThickness", {
+	Text = "Tracer Thickness",
+	Default = 1,
+	Min = 0.5,
+	Max = 3,
+	Rounding = 1,
+	Suffix = "px",
+})
+ESPGroup2:AddSlider("BoxThickness", {
+	Text = "Box Thickness",
+	Default = 1.5,
+	Min = 0.5,
+	Max = 3,
+	Rounding = 1,
+	Suffix = "px",
+})
+ESPGroup2:AddSlider("OutlineThickness", {
+	Text = "Outline Thickness",
+	Default = 3,
+	Min = 1,
+	Max = 5,
+	Rounding = 0,
+	Suffix = "px",
+})
+ESPGroup2:AddSlider("FontSize", {
+	Text = "Font Size",
+	Default = 13,
+	Min = 10,
+	Max = 20,
+	Rounding = 0,
+	Suffix = "px",
+})
+ESPGroup2:AddSlider("BarWidth", {
+	Text = "Bar Width",
+	Default = 2,
+	Min = 1,
+	Max = 5,
+	Rounding = 0,
+	Suffix = "px",
+})
+ESPGroup2:AddSlider("BarHeight", {
+	Text = "Bar Height",
+	Default = 30,
+	Min = 15,
+	Max = 60,
+	Rounding = 0,
+	Suffix = "px",
+})
+ESPGroup2:AddSlider("BarOffset", {
+	Text = "Bar Offset",
+	Default = 2,
+	Min = 0,
+	Max = 10,
+	Rounding = 0,
+	Suffix = "px",
+})
+
+ESPGroup2:AddSlider("ESPDistanceReference", {
+	Text = "Reference Distance",
+	Default = 50,
+	Min = 10,
+	Max = 200,
+	Rounding = 0,
+	Suffix = "studs",
+	Tooltip = "Bars are normal size at this distance",
+})
+
+ESPGroup2:AddToggle("Eli's mode <3 ;3", {
+	Text = "Eli's mode <3 ;3",
+	Default = false,
+	Tooltip = "Cycle ESP, FOV circle, and world colors through a rainbow",
+})
+
+ESPGroup2:AddSlider("ChromaSpeed", {
+	Text = "Chroma Speed",
+	Default = 1,
+	Min = 0.1,
+	Max = 5,
+	Rounding = 1,
+	Suffix = "x",
+})
+
+ESPGroup2:AddDivider()
+ESPGroup2:AddLabel("ESP/FOV Chroma Elements", false)
+ESPGroup2:AddToggle("ChromaBox", { Text = "Box", Default = true })
+ESPGroup2:AddToggle("ChromaOutline", { Text = "Outline", Default = true })
+ESPGroup2:AddToggle("ChromaTracer", { Text = "Tracer", Default = true })
+ESPGroup2:AddToggle("ChromaName", { Text = "Name", Default = true })
+ESPGroup2:AddToggle("ChromaHealth", { Text = "Health", Default = true })
+ESPGroup2:AddToggle("ChromaHeat", { Text = "Heat", Default = true })
+ESPGroup2:AddToggle("ChromaImpact", { Text = "Impact", Default = true })
+ESPGroup2:AddToggle("ChromaFOVCircle", { Text = "FOV Circle", Default = true })
+
+ESPGroup2:AddDivider()
+ESPGroup2:AddLabel("World Chroma Elements", false)
+ESPGroup2:AddToggle("ChromaAmbient", { Text = "Ambient", Default = true })
+ESPGroup2:AddToggle("ChromaOutdoorAmbient", { Text = "OutdoorAmbient", Default = true })
+ESPGroup2:AddToggle("ChromaFog", { Text = "Fog", Default = true })
+ESPGroup2:AddToggle("ChromaColorShift", { Text = "ColorShift", Default = true })
+ESPGroup2:AddToggle("ChromaClouds", { Text = "Clouds", Default = true })
+ESPGroup2:AddToggle("ChromaCamera", { Text = "Camera", Default = true })
+
+ThemeManager:SetLibrary(Library)
+SaveManager:SetLibrary(Library)
+SaveManager:IgnoreThemeSettings()
+SaveManager:SetIgnoreIndexes({ "MenuKeybind", "Eli's mode <3 ;3" })
+ThemeManager:SetFolder("ObsidianUniversal")
+SaveManager:SetFolder("ObsidianUniversal/configs")
+SaveManager:BuildConfigSection(Tabs["UI Settings"])
+ThemeManager:ApplyToTab(Tabs["UI Settings"])
+
+local MenuGroup = Tabs["UI Settings"]:AddLeftGroupbox("Menu", "wrench")
+MenuGroup:AddToggle("KeybindMenuOpen", {
+	Default = Library.KeybindFrame.Visible,
+	Text = "Open Keybind Menu",
+	Callback = function(value)
+		Library.KeybindFrame.Visible = value
+	end,
+})
+MenuGroup:AddToggle("ShowCustomCursor", {
+	Text = "Custom Cursor",
+	Default = true,
+	Callback = function(Value)
+		Library.ShowCustomCursor = Value
+	end,
+})
+MenuGroup:AddDropdown("NotificationSide", {
+	Values = { "Left", "Right" },
+	Default = "Right",
+	Text = "Notification Side",
+	Callback = function(Value)
+		Library:SetNotifySide(Value)
+	end,
+})
+MenuGroup:AddDropdown("DPIDropdown", {
+	Values = { "50%", "75%", "100%", "125%", "150%", "175%", "200%" },
+	Default = "100%",
+	Text = "DPI Scale",
+	Callback = function(Value)
+		Value = Value:gsub("%%", "")
+		local DPI = tonumber(Value)
+		Library:SetDPIScale(DPI)
+	end,
+})
+MenuGroup:AddSlider("UICornerSlider", {
+	Text = "Corner Radius",
+	Default = Library.CornerRadius,
+	Min = 0,
+	Max = 20,
+	Rounding = 0,
+	Callback = function(value)
+		Window:SetCornerRadius(value)
+	end,
+})
+MenuGroup:AddDivider()
+MenuGroup:AddLabel("Menu bind")
+	:AddKeyPicker("MenuKeybind", { Default = "RightShift", NoUI = true, Text = "Menu keybind" })
+MenuGroup:AddButton("Unload", function()
+	Library:Unload()
+end)
+
+Library.ToggleKeybind = Options.MenuKeybind
+
+local function isUserInputType(name)
+	return name == "MouseButton1" or name == "MouseButton2" or name == "MouseButton3" or name:sub(1, 2) == "MB"
+end
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then
+		return
+	end
+	if Options.KeybindMode.Value ~= "Toggle" then
+		return
+	end
+
+	local keyData = Options.AimlockKey
+	local targetKey = keyData.Value
+	local modifiers = keyData.Modifiers or {}
+	local matches = false
+
+	if isUserInputType(targetKey) then
+		local success, targetEnum = pcall(function()
+			return Enum.UserInputType[targetKey]
+		end)
+		if success and targetEnum and input.UserInputType == targetEnum then
+			local allModsHeld = true
+			for _, mod in ipairs(modifiers) do
+				if not UserInputService:IsKeyDown(Enum.KeyCode[mod]) then
+					allModsHeld = false
+					break
+				end
+			end
+			if allModsHeld then
+				matches = true
+			end
+		end
+	else
+		local success, targetEnum = pcall(function()
+			return Enum.KeyCode[targetKey]
+		end)
+		if success and targetEnum and input.KeyCode == targetEnum then
+			local allModsHeld = true
+			for _, mod in ipairs(modifiers) do
+				if not UserInputService:IsKeyDown(Enum.KeyCode[mod]) then
+					allModsHeld = false
+					break
+				end
+			end
+			if allModsHeld then
+				matches = true
+			end
+		end
+	end
+
+	if matches then
+		AimlockToggleState = not AimlockToggleState
+		StatusLabel:SetText(AimlockToggleState and "Status: Active" or "Status: Inactive")
+	end
+end)
+
+local function getTargetPart(entity, partName)
+	local hurtboxes = entity:FindFirstChild("Hurtboxes")
+	if not hurtboxes then
+		return nil
+	end
+	if partName == "Head" then
+		return hurtboxes:FindFirstChild("Head_Hurtbox")
+	elseif partName == "HumanoidRootPart" then
+		return hurtboxes:FindFirstChild("HumanoidRootPart_Hurtbox")
+	end
+	return nil
+end
+
+local function isTeammate(player)
+	if player.Team and LocalPlayer.Team and player.Team == LocalPlayer.Team then
+		return true
+	end
+	return false
+end
+
+local function isVisible(targetPart)
+	local origin = Camera.CFrame.Position
+	local direction = (targetPart.Position - origin).Unit * (targetPart.Position - origin).Magnitude
+
+	local raycastParams = RaycastParams.new()
+	raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+
+	local excludeList = { LocalPlayer.Character }
+
+	local entityModel = targetPart
+	while entityModel and entityModel.Parent ~= workspace.Entities do
+		entityModel = entityModel.Parent
+	end
+	if entityModel and entityModel:IsA("Model") then
+		table.insert(excludeList, entityModel)
+	end
+
+	raycastParams.FilterDescendantsInstances = excludeList
+
+	local result = workspace:Raycast(origin, direction, raycastParams)
+	return result == nil
+end
+
+local function findClosestAimTarget()
+	local fov = Options.FOV.Value
+	local maxDist = Options.MaxDistance.Value
+	local targetPartName = Options.TargetPart.Value
+	local teamCheck = Toggles.TeamCheck.Value
+	local wallCheck = Toggles.WallCheck and Toggles.WallCheck.Value
+	local screenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+	local bestPart = nil
+	local bestDistToCenter = math.huge
+
+	local entitiesFolder = workspace:FindFirstChild("Entities")
+	if not entitiesFolder then
+		return nil
+	end
+
+	for _, entity in ipairs(entitiesFolder:GetChildren()) do
+		if entity:IsA("Model") then
+			local humanoid = entity:FindFirstChildWhichIsA("Humanoid")
+			if humanoid and humanoid.Health > 0 then
+				local owner = Players:GetPlayerFromCharacter(entity)
+				if owner then
+					if owner == LocalPlayer then
+						continue
+					end
+					if teamCheck and isTeammate(owner) then
+						continue
+					end
+				end
+				local part = getTargetPart(entity, targetPartName)
+				if part and part:IsA("BasePart") then
+					if wallCheck and not isVisible(part) then
+						continue
+					end
+					local distance = (Camera.CFrame.Position - part.Position).Magnitude
+					if distance <= maxDist then
+						local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
+						if onScreen then
+							local screenDist = (Vector2.new(screenPos.X, screenPos.Y) - screenCenter).Magnitude
+							if screenDist <= fov and screenDist < bestDistToCenter then
+								bestDistToCenter = screenDist
+								bestPart = part
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	return bestPart
+end
+
+local function performAutoAttack()
+	if not Toggles.AutoAttackEnabled.Value then
+		return
+	end
+	local range = Options.AutoAttackRange.Value
+	local cooldown = Options.AutoAttackCooldown.Value
+	local now = tick()
+	if now - LastAttackTime < cooldown then
+		return
+	end
+
+	local teamCheck = Toggles.TeamCheck.Value
+	local entitiesFolder = workspace:FindFirstChild("Entities")
+	if not entitiesFolder then
+		return
+	end
+
+	local playerRootPart = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+	if not playerRootPart then
+		return
+	end
+
+	local closestDistance = math.huge
+	local closestEntity = nil
+
+	for _, entity in ipairs(entitiesFolder:GetChildren()) do
+		if entity:IsA("Model") then
+			local humanoid = entity:FindFirstChildWhichIsA("Humanoid")
+			if humanoid and humanoid.Health > 0 then
+				local owner = Players:GetPlayerFromCharacter(entity)
+				if owner then
+					if owner == LocalPlayer then
+						continue
+					end
+					if teamCheck and isTeammate(owner) then
+						continue
+					end
+				end
+				local rootPart = entity:FindFirstChild("HumanoidRootPart") or entity.PrimaryPart
+				if rootPart and rootPart:IsA("BasePart") then
+					local distance = (playerRootPart.Position - rootPart.Position).Magnitude
+					if distance <= range and distance < closestDistance then
+						closestDistance = distance
+						closestEntity = entity
+					end
+				end
+			end
+		end
+	end
+
+	if closestEntity then
+		LastAttackTime = now
+		local screenCenterX = Camera.ViewportSize.X / 2
+		local screenCenterY = Camera.ViewportSize.Y / 2
+		VirtualInputManager:SendMouseButtonEvent(screenCenterX, screenCenterY, 0, true, game, 1)
+		task.wait(0.01)
+		VirtualInputManager:SendMouseButtonEvent(screenCenterX, screenCenterY, 0, false, game, 1)
+	end
+end
+
+local GlareDelayKeys = {
+	["MonarchGlare"] = "MonarchGlareDelay",
+	["PhoenixGlare"] = "PhoenixGlareDelay",
+	["SiegeGlare"] = "SiegeGlareDelay",
+	["Cross"] = "CrossDelay",
+	["ParryIndicator"] = "ParryIndicatorDelay",
+	["SlideAttack"] = "SlideAttackDelay",
+	["Attack2"] = "Attack2Delay",
+	["Attack1"] = "Attack1Delay",
+	["3P_RAttack"] = "3P_RAttackDelay",
+	["3P_LAttack"] = "3P_LAttackDelay",
+	["3P_CAttack"] = "3P_CAttackDelay",
+}
+
+local function pressParryKey()
+	local parryKey = Options.ParryKey.Value
+	if not parryKey then
+		return
+	end
+	local success, keyEnum = pcall(function()
+		return Enum.KeyCode[parryKey]
+	end)
+	if success and keyEnum then
+		VirtualInputManager:SendKeyEvent(true, keyEnum, false, game)
+		task.wait(0.1)
+		VirtualInputManager:SendKeyEvent(false, keyEnum, false, game)
+	end
+end
+
+local function doublePressParryKey()
+	pressParryKey()
+	local gap = Options.DoublePressGap and Options.DoublePressGap.Value or 0.3
+	task.wait(gap)
+	pressParryKey()
+end
+
+local function isEnemyInParryDistance()
+	if not Toggles.ParryDistanceCheck or not Toggles.ParryDistanceCheck.Value then
+		return true
+	end
+
+	local dist = Options.ParryDistance and Options.ParryDistance.Value or 500
+	local playerRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+	if not playerRoot then
+		return false
+	end
+
+	local entitiesFolder = workspace:FindFirstChild("Entities")
+	if not entitiesFolder then
+		return true
+	end
+
+	for _, entity in ipairs(entitiesFolder:GetChildren()) do
+		if entity:IsA("Model") then
+			local humanoid = entity:FindFirstChildWhichIsA("Humanoid")
+			if humanoid and humanoid.Health > 0 then
+				local owner = Players:GetPlayerFromCharacter(entity)
+				if owner then
+					if owner == LocalPlayer then
+						continue
+					end
+					if Toggles.TeamCheck and Toggles.TeamCheck.Value and isTeammate(owner) then
+						continue
+					end
+				end
+				local rootPart = entity:FindFirstChild("HumanoidRootPart") or entity.PrimaryPart
+				if rootPart and rootPart:IsA("BasePart") then
+					if (playerRoot.Position - rootPart.Position).Magnitude <= dist then
+						return true
+					end
+				end
+			end
+		end
+	end
+	return false
+end
+
+local function onGlareAppeared(glare, glareName)
+	if ParryWatching then
+		return
+	end
+	ParryWatching = true
+
+	local ancestryConnection
+	ancestryConnection = glare.AncestryChanged:Connect(function(_, newParent)
+		if newParent == nil then
+			ParryWatching = false
+			if ancestryConnection then
+				ancestryConnection:Disconnect()
+			end
+		end
+	end)
+
+	local delayKey = GlareDelayKeys[glareName]
+	local delay = delayKey and Options[delayKey] and Options[delayKey].Value or 1
+
+	task.wait(delay)
+
+	if isEnemyInParryDistance() then
+		if glareName == "SiegeGlare" then
+			doublePressParryKey()
+		else
+			pressParryKey()
+		end
+	end
+
+	ParryWatching = false
+	if ancestryConnection then
+		ancestryConnection:Disconnect()
+	end
+end
+
+local function setupParryDetection()
+	local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+	local VisualEffects = PlayerGui:WaitForChild("VisualEffects")
+
+	if parryGlareConnection then
+		parryGlareConnection:Disconnect()
+	end
+
+	parryGlareConnection = VisualEffects.ChildAdded:Connect(function(child)
+		if GlareDelayKeys[child.Name] and child:IsA("GuiObject") then
+			onGlareAppeared(child, child.Name)
+		end
+	end)
+
+	for _, child in ipairs(VisualEffects:GetChildren()) do
+		if GlareDelayKeys[child.Name] and child:IsA("GuiObject") then
+			onGlareAppeared(child, child.Name)
+		end
+	end
+end
+
+function StartParryWatcher()
+	if ParryWatcherRunning then
+		return
+	end
+	ParryWatcherRunning = true
+
+	local conn
+	conn = RunService.Heartbeat:Connect(function()
+		if LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("VisualEffects") then
+			setupParryDetection()
+			conn:Disconnect()
+		end
+	end)
+end
+
+function StopParryWatcher()
+	ParryWatcherRunning = false
+	if parryGlareConnection then
+		parryGlareConnection:Disconnect()
+		parryGlareConnection = nil
+	end
+	ParryWatching = false
+end
+
+local function getParryHurtbox()
+	local char = LocalPlayer.Character
+	if not char then
+		return nil
+	end
+	local entity = workspace.Entities:FindFirstChild(LocalPlayer.Name)
+	if not entity then
+		return nil
+	end
+	local hurtboxes = entity:FindFirstChild("Hurtboxes")
+	if not hurtboxes then
+		return nil
+	end
+	return hurtboxes:FindFirstChild("Parry_Hurtbox")
+end
+
+local function updateParryHurtboxSize()
+	if not Toggles.ExpandParryHitbox then
+		if lastParryHurtboxPart and originalParryHurtboxSize then
+			lastParryHurtboxPart.Size = originalParryHurtboxSize
+		end
+		lastParryHurtboxPart = nil
+		originalParryHurtboxSize = nil
+		return
+	end
+
+	local part = getParryHurtbox()
+	if part and part:IsA("BasePart") then
+		if part ~= lastParryHurtboxPart then
+			originalParryHurtboxSize = part.Size
+			lastParryHurtboxPart = part
+		end
+		local multiplier = Options.ParryHitboxMultiplier.Value
+		part.Size = originalParryHurtboxSize * multiplier
+	else
+		lastParryHurtboxPart = nil
+		originalParryHurtboxSize = nil
+	end
+end
+
+local function getHitboxPart(partName)
+	local char = LocalPlayer.Character
+	if not char then
+		return nil
+	end
+	local entity = workspace.Entities:FindFirstChild(LocalPlayer.Name)
+	if not entity then
+		return nil
+	end
+	local hurtboxes = entity:FindFirstChild("Hurtboxes")
+	if not hurtboxes then
+		return nil
+	end
+	return hurtboxes:FindFirstChild(partName)
+end
+
+local function updateHitboxExtender()
+	if not Toggles.HitboxExtenderEnabled then
+		for part, originalSize in pairs(extendedHitboxes) do
+			pcall(function()
+				part.Size = originalSize
+			end)
+		end
+		extendedHitboxes = {}
+		return
+	end
+
+	local multiplier = Options.HitboxExtenderMultiplier.Value
+	local newExtended = {}
+
+	for _, partName in ipairs(hitboxExtenderParts) do
+		local part = getHitboxPart(partName)
+		if part and part:IsA("BasePart") then
+			if not extendedHitboxes[part] then
+				extendedHitboxes[part] = part.Size
+			end
+			newExtended[part] = extendedHitboxes[part]
+			part.Size = extendedHitboxes[part] * multiplier
+		end
+	end
+
+	for part, originalSize in pairs(extendedHitboxes) do
+		if not newExtended[part] then
+			pcall(function()
+				part.Size = originalSize
+			end)
+		end
+	end
+	extendedHitboxes = newExtended
+end
+
+local function isPlayerMoving()
+	return UserInputService:IsKeyDown(Enum.KeyCode.W)
+		or UserInputService:IsKeyDown(Enum.KeyCode.A)
+		or UserInputService:IsKeyDown(Enum.KeyCode.S)
+		or UserInputService:IsKeyDown(Enum.KeyCode.D)
+		or UserInputService:IsKeyDown(Enum.KeyCode.Up)
+		or UserInputService:IsKeyDown(Enum.KeyCode.Down)
+		or UserInputService:IsKeyDown(Enum.KeyCode.Left)
+		or UserInputService:IsKeyDown(Enum.KeyCode.Right)
+end
+
+local function performBunnyHop()
+	if not Toggles.BunnyHopEnabled.Value then
+		return
+	end
+	if not LocalPlayer.Character then
+		return
+	end
+
+	local isMoving = isPlayerMoving()
+	if Toggles.MovementDebug and Toggles.MovementDebug.Value then
+		print("[BunnyHop] Enabled:", Toggles.BunnyHopEnabled.Value, "Moving:", isMoving)
+	end
+
+	if not isMoving then
+		return
+	end
+
+	local now = tick()
+	local delay = Options.BunnyHopDelay and Options.BunnyHopDelay.Value or 0.1
+	if now - LastBunnyHopTime < delay then
+		return
+	end
+
+	LastBunnyHopTime = now
+
+	local holdTime = Options.BunnyHopHoldTime and Options.BunnyHopHoldTime.Value or 0.05
+	local releaseGap = Options.BunnyHopReleaseGap and Options.BunnyHopReleaseGap.Value or 0.02
+
+	VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.LeftControl, false, game)
+	VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+	task.wait(holdTime)
+	VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.LeftControl, false, game)
+	task.wait(releaseGap)
+	VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+
+	if Toggles.MovementDebug and Toggles.MovementDebug.Value then
+		print("[BunnyHop] Hopped! (hold=" .. holdTime .. ", gap=" .. releaseGap .. ")")
+	end
+end
+
+local function performAutoDash()
+	if not Toggles.AutoDashEnabled.Value then
+		return
+	end
+	if not LocalPlayer.Character then
+		return
+	end
+
+	local isMoving = isPlayerMoving()
+	if Toggles.MovementDebug and Toggles.MovementDebug.Value then
+		print("[AutoDash] Enabled:", Toggles.AutoDashEnabled.Value, "Moving:", isMoving)
+	end
+
+	if not isMoving then
+		return
+	end
+
+	local now = tick()
+	local delay = Options.DashDelay and Options.DashDelay.Value or 0.2
+	if now - LastDashTime < delay then
+		return
+	end
+
+	LastDashTime = now
+
+	local dashKey = Options.DashKey.Value
+	if not dashKey then
+		return
+	end
+	local success, keyEnum = pcall(function()
+		return Enum.KeyCode[dashKey]
+	end)
+	if success and keyEnum then
+		VirtualInputManager:SendKeyEvent(true, keyEnum, false, game)
+		task.wait(0.1)
+		VirtualInputManager:SendKeyEvent(false, keyEnum, false, game)
+		if Toggles.MovementDebug and Toggles.MovementDebug.Value then
+			print("[AutoDash] Dashed with key:", dashKey)
+		end
+	else
+		if Toggles.MovementDebug and Toggles.MovementDebug.Value then
+			print("[AutoDash] Invalid key:", dashKey)
+		end
+	end
+end
+
+local function getPlayerStats(player)
+	if player and player:FindFirstChild("ReadOnly") then
+		local ro = player.ReadOnly
+		return {
+			health_max = ro:FindFirstChild("health_max") and ro.health_max.Value,
+			health = ro:FindFirstChild("health") and ro.health.Value,
+			heat_max = ro:FindFirstChild("heat_max") and ro.heat_max.Value,
+			heat = ro:FindFirstChild("heat") and ro.heat.Value,
+			heat_per_bullet = ro:FindFirstChild("heat_per_bullet") and ro.heat_per_bullet.Value,
+			impact = ro:FindFirstChild("impact") and ro.impact.Value,
+			impact_limit = ro:FindFirstChild("impact_limit") and ro.impact_limit.Value,
+		}
+	end
+	return nil
+end
+
+local function worldToScreen(pos)
+	local screenPos, onScreen = Camera:WorldToViewportPoint(pos)
+	return Vector2.new(screenPos.X, screenPos.Y), onScreen
+end
+
+local function createDrawing(type, properties)
+	local drawing = Drawing.new(type)
+	for k, v in pairs(properties) do
+		drawing[k] = v
+	end
+	return drawing
+end
+
+local function clearPlayerESP(player)
+	if espCache[player] then
+		local cache = espCache[player]
+
+		if cache.ancestryConnection then
+			cache.ancestryConnection:Disconnect()
+		end
+		if cache.diedConnection then
+			cache.diedConnection:Disconnect()
+		end
+
+		for _, drawing in pairs(cache) do
+			if type(drawing) == "table" then
+				for _, d in pairs(drawing) do
+					if d.Remove then
+						d:Remove()
+					end
+				end
+			else
+				if drawing.Remove then
+					drawing:Remove()
+				end
+			end
+		end
+
+		if cache.renderStepName then
+			RunService:UnbindFromRenderStep(cache.renderStepName)
+		end
+		espCache[player] = nil
+	end
+end
+
+local function updatePlayerESP(player, rainbowColor)
+	local character = player.Character
+	if not character then
+		clearPlayerESP(player)
+		return
+	end
+	local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+	if not humanoidRootPart then
+		clearPlayerESP(player)
+		return
+	end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid then
+		clearPlayerESP(player)
+		return
+	end
+
+	if Toggles.ESPTeamCheck and Toggles.ESPTeamCheck.Value and isTeammate(player) then
+		clearPlayerESP(player)
+		return
+	end
+
+	local stats = getPlayerStats(player)
+	if not stats then
+		clearPlayerESP(player)
+		return
+	end
+
+	if not espCache[player] then
+		espCache[player] = {}
+	end
+	local cache = espCache[player]
+
+	if not cache.nameText then
+		cache.nameText = createDrawing("Text", { Size = Options.FontSize.Value, Center = true, Outline = true })
+		cache.hpLeft = createDrawing("Text", { Size = Options.FontSize.Value - 2, Center = false, Outline = false })
+		cache.hpRight = createDrawing("Text", { Size = Options.FontSize.Value - 2, Center = false, Outline = false })
+		cache.infoText = createDrawing("Text", { Size = Options.FontSize.Value - 2, Center = true, Outline = false })
+
+		cache.boxLines = {
+			c1 = createDrawing("Line", { Thickness = Options.BoxThickness.Value }),
+			c2 = createDrawing("Line", { Thickness = Options.BoxThickness.Value }),
+			c3 = createDrawing("Line", { Thickness = Options.BoxThickness.Value }),
+			c4 = createDrawing("Line", { Thickness = Options.BoxThickness.Value }),
+			c5 = createDrawing("Line", { Thickness = Options.BoxThickness.Value }),
+			c6 = createDrawing("Line", { Thickness = Options.BoxThickness.Value }),
+			c7 = createDrawing("Line", { Thickness = Options.BoxThickness.Value }),
+			c8 = createDrawing("Line", { Thickness = Options.BoxThickness.Value }),
+		}
+
+		cache.hpOut = createDrawing("Square", { Filled = false, Thickness = 1 })
+		cache.hpBar = createDrawing("Square", { Filled = true, Thickness = 0 })
+
+		cache.heatOut = createDrawing("Square", { Filled = false, Thickness = 1 })
+		cache.heatBar = createDrawing("Square", { Filled = true, Thickness = 0 })
+
+		cache.tracer = createDrawing("Line", { Thickness = Options.TracerThickness.Value })
+
+		cache.outlineLines = {
+			top = createDrawing("Line", { Thickness = Options.OutlineThickness.Value }),
+			bottom = createDrawing("Line", { Thickness = Options.OutlineThickness.Value }),
+			left = createDrawing("Line", { Thickness = Options.OutlineThickness.Value }),
+			right = createDrawing("Line", { Thickness = Options.OutlineThickness.Value }),
+		}
+
+		cache.ancestryConnection = character.AncestryChanged:Connect(function(_, p)
+			if not p then
+				clearPlayerESP(player)
+			end
+		end)
+		cache.diedConnection = humanoid.Died:Connect(function()
+			clearPlayerESP(player)
+		end)
+	end
+
+	local rootPos = humanoidRootPart.Position
+	local head = character:FindFirstChild("Head")
+	local headPos = head and head.Position or rootPos + Vector3.new(0, 3, 0)
+	local screenRoot, onScreen = worldToScreen(rootPos)
+	local screenHead, headOnScreen = worldToScreen(headPos)
+
+	if not onScreen and not headOnScreen then
+		for _, d in pairs(cache) do
+			if type(d) == "table" then
+				for _, v in pairs(d) do
+					if v.Visible ~= nil then
+						v.Visible = false
+					end
+				end
+			elseif d.Visible ~= nil then
+				d.Visible = false
+			end
+		end
+		return
+	end
+
+	local distance = (Camera.CFrame.Position - rootPos).Magnitude
+	local referenceDist = Options.ESPDistanceReference and Options.ESPDistanceReference.Value or 50
+	local scale = math.clamp(referenceDist / math.max(distance, 1), 0.3, 3.0)
+
+	local chromaEnabled = Toggles["Eli's mode <3 ;3"] and Toggles["Eli's mode <3 ;3"].Value
+	local boxColor = (chromaEnabled and Toggles.ChromaBox and Toggles.ChromaBox.Value) and rainbowColor
+		or (Options.BoxColor.Value or Color3.new(1, 1, 1))
+	local outlineColor = (chromaEnabled and Toggles.ChromaOutline and Toggles.ChromaOutline.Value) and rainbowColor
+		or (Options.OutlineColor.Value or Color3.new(0, 0, 0))
+	local tracerColor = (chromaEnabled and Toggles.ChromaTracer and Toggles.ChromaTracer.Value) and rainbowColor
+		or (Options.TracerColor.Value or Color3.new(1, 1, 1))
+	local nameColor = (chromaEnabled and Toggles.ChromaName and Toggles.ChromaName.Value) and rainbowColor
+		or (Options.NameColor.Value or Color3.new(1, 1, 1))
+	local healthFullColor = Options.HealthFullColor.Value or Color3.new(0, 1, 0)
+	local healthLowColor = Options.HealthLowColor.Value or Color3.new(1, 0, 0)
+	local healthBarColor = (chromaEnabled and Toggles.ChromaHealth and Toggles.ChromaHealth.Value) and rainbowColor
+		or (
+			stats.health
+				and stats.health_max
+				and healthFullColor:Lerp(healthLowColor, 1 - math.clamp(stats.health / stats.health_max, 0, 1))
+			or healthFullColor
+		)
+	local heatColor = (chromaEnabled and Toggles.ChromaHeat and Toggles.ChromaHeat.Value) and rainbowColor
+		or (Options.HeatColor.Value or Color3.fromRGB(255, 100, 0))
+	local impactColor = (chromaEnabled and Toggles.ChromaImpact and Toggles.ChromaImpact.Value) and rainbowColor
+		or (Options.ImpactColor.Value or Color3.new(1, 1, 1))
+
+	local characterSize = character:GetExtentsSize()
+	local topY = (headPos - rootPos).Magnitude
+	local bottomY = (rootPos - (rootPos - Vector3.new(0, characterSize.Y / 2, 0))).Magnitude
+	local topScreen, _ = worldToScreen(rootPos + Vector3.new(0, topY, 0))
+	local bottomScreen, _ = worldToScreen(rootPos - Vector3.new(0, bottomY, 0))
+	local height = (topScreen.Y - bottomScreen.Y)
+	local width = height * 0.4
+	local left = screenRoot.X - width / 2
+	local right = screenRoot.X + width / 2
+
+	if Toggles.ShowBox and Toggles.ShowBox.Value then
+		local useCorners = Toggles.CornersOnly and Toggles.CornersOnly.Value
+		local boxThickness = Options.BoxThickness.Value
+		if useCorners then
+			local cl = width * 0.25
+			cache.boxLines.c1.From = Vector2.new(left, topScreen.Y)
+			cache.boxLines.c1.To = Vector2.new(left + cl, topScreen.Y)
+			cache.boxLines.c1.Color = boxColor
+			cache.boxLines.c1.Thickness = boxThickness
+			cache.boxLines.c1.Visible = true
+
+			cache.boxLines.c2.From = Vector2.new(left, topScreen.Y)
+			cache.boxLines.c2.To = Vector2.new(left, topScreen.Y + cl)
+			cache.boxLines.c2.Color = boxColor
+			cache.boxLines.c2.Thickness = boxThickness
+			cache.boxLines.c2.Visible = true
+
+			cache.boxLines.c3.From = Vector2.new(right, topScreen.Y)
+			cache.boxLines.c3.To = Vector2.new(right - cl, topScreen.Y)
+			cache.boxLines.c3.Color = boxColor
+			cache.boxLines.c3.Thickness = boxThickness
+			cache.boxLines.c3.Visible = true
+
+			cache.boxLines.c4.From = Vector2.new(right, topScreen.Y)
+			cache.boxLines.c4.To = Vector2.new(right, topScreen.Y + cl)
+			cache.boxLines.c4.Color = boxColor
+			cache.boxLines.c4.Thickness = boxThickness
+			cache.boxLines.c4.Visible = true
+
+			cache.boxLines.c5.From = Vector2.new(left, bottomScreen.Y)
+			cache.boxLines.c5.To = Vector2.new(left + cl, bottomScreen.Y)
+			cache.boxLines.c5.Color = boxColor
+			cache.boxLines.c5.Thickness = boxThickness
+			cache.boxLines.c5.Visible = true
+
+			cache.boxLines.c6.From = Vector2.new(left, bottomScreen.Y)
+			cache.boxLines.c6.To = Vector2.new(left, bottomScreen.Y - cl)
+			cache.boxLines.c6.Color = boxColor
+			cache.boxLines.c6.Thickness = boxThickness
+			cache.boxLines.c6.Visible = true
+
+			cache.boxLines.c7.From = Vector2.new(right, bottomScreen.Y)
+			cache.boxLines.c7.To = Vector2.new(right - cl, bottomScreen.Y)
+			cache.boxLines.c7.Color = boxColor
+			cache.boxLines.c7.Thickness = boxThickness
+			cache.boxLines.c7.Visible = true
+
+			cache.boxLines.c8.From = Vector2.new(right, bottomScreen.Y)
+			cache.boxLines.c8.To = Vector2.new(right, bottomScreen.Y - cl)
+			cache.boxLines.c8.Color = boxColor
+			cache.boxLines.c8.Thickness = boxThickness
+			cache.boxLines.c8.Visible = true
+		else
+			for _, v in pairs(cache.boxLines) do
+				v.Visible = false
+			end
+		end
+	else
+		for _, v in pairs(cache.boxLines) do
+			v.Visible = false
+		end
+	end
+
+	if Toggles.ShowOutline and Toggles.ShowOutline.Value then
+		local outlineThickness = Options.OutlineThickness.Value or 3
+		local pad = 2
+		cache.outlineLines.top.From = Vector2.new(left - pad, topScreen.Y - pad)
+		cache.outlineLines.top.To = Vector2.new(right + pad, topScreen.Y - pad)
+		cache.outlineLines.bottom.From = Vector2.new(left - pad, bottomScreen.Y + pad)
+		cache.outlineLines.bottom.To = Vector2.new(right + pad, bottomScreen.Y + pad)
+		cache.outlineLines.left.From = Vector2.new(left - pad, bottomScreen.Y + pad)
+		cache.outlineLines.left.To = Vector2.new(left - pad, topScreen.Y - pad)
+		cache.outlineLines.right.From = Vector2.new(right + pad, bottomScreen.Y + pad)
+		cache.outlineLines.right.To = Vector2.new(right + pad, topScreen.Y - pad)
+		for _, v in pairs(cache.outlineLines) do
+			v.Color = outlineColor
+			v.Thickness = outlineThickness
+			v.Visible = true
+		end
+	else
+		for _, v in pairs(cache.outlineLines) do
+			v.Visible = false
+		end
+	end
+
+	if Toggles.ShowName and Toggles.ShowName.Value then
+		local nameText = player.DisplayName
+		cache.nameText.Text = nameText
+		cache.nameText.Position = Vector2.new(screenRoot.X, (headOnScreen and screenHead.Y or screenRoot.Y) - 20)
+		cache.nameText.Color = nameColor
+		cache.nameText.Size = Options.FontSize.Value
+		cache.nameText.Visible = true
+	else
+		cache.nameText.Visible = false
+	end
+
+	if Toggles.ShowTracers and Toggles.ShowTracers.Value then
+		cache.tracer.From = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y)
+		cache.tracer.To = screenRoot
+		cache.tracer.Color = tracerColor
+		cache.tracer.Thickness = Options.TracerThickness.Value
+		cache.tracer.Visible = true
+	else
+		cache.tracer.Visible = false
+	end
+
+	if Toggles.ShowHealth and Toggles.ShowHealth.Value and stats.health_max and stats.health then
+		local barWidth = Options.BarWidth.Value * scale
+		local barHeight = Options.BarHeight.Value * scale
+		local barOffset = Options.BarOffset.Value * scale
+		local healthPercent = math.clamp(stats.health / stats.health_max, 0, 1)
+		local yStart = headOnScreen and screenHead.Y or screenRoot.Y
+		local yEnd = yStart + barHeight
+
+		cache.hpOut.Size = Vector2.new(barWidth + 2, barHeight + 2)
+		cache.hpOut.Position = Vector2.new(left - barWidth - barOffset - 1, yStart - 1)
+		cache.hpOut.Color = (chromaEnabled and Toggles.ChromaHealth and Toggles.ChromaHealth.Value) and rainbowColor
+			or Color3.new(1, 1, 1)
+		cache.hpOut.Visible = true
+
+		local hpFill = barHeight * healthPercent
+		cache.hpBar.Size = Vector2.new(barWidth, hpFill)
+		cache.hpBar.Position = Vector2.new(left - barWidth - barOffset, yEnd - hpFill)
+		cache.hpBar.Color = healthBarColor
+		cache.hpBar.Visible = true
+
+		cache.hpLeft.Text = string.format("%.0f", stats.health)
+		cache.hpLeft.Position = Vector2.new(left + 2, yStart + 2)
+		cache.hpLeft.Color = (chromaEnabled and Toggles.ChromaHealth and Toggles.ChromaHealth.Value) and rainbowColor
+			or Color3.new(1, 1, 1)
+		cache.hpLeft.Size = Options.FontSize.Value - 2
+		cache.hpLeft.Visible = true
+
+		cache.hpRight.Text = string.format("%.0f", stats.health_max)
+		cache.hpRight.Position = Vector2.new(right - 2 - 20, yStart + 2)
+		cache.hpRight.Color = (chromaEnabled and Toggles.ChromaHealth and Toggles.ChromaHealth.Value) and rainbowColor
+			or Color3.new(1, 1, 1)
+		cache.hpRight.Size = Options.FontSize.Value - 2
+		cache.hpRight.Visible = true
+	else
+		cache.hpOut.Visible = false
+		cache.hpBar.Visible = false
+		cache.hpLeft.Visible = false
+		cache.hpRight.Visible = false
+	end
+
+	if Toggles.ShowHeat and Toggles.ShowHeat.Value and stats.heat_max and stats.heat and stats.heat_per_bullet then
+		local barWidth = Options.BarWidth.Value * scale
+		local barHeight = Options.BarHeight.Value * scale
+		local barOffset = Options.BarOffset.Value * scale
+		local heatPerBullet = stats.heat_per_bullet
+		local maxBullets = heatPerBullet > 0 and math.floor(stats.heat_max / heatPerBullet) or 0
+		local currentBullets = heatPerBullet > 0 and math.floor(stats.heat / heatPerBullet) or 0
+		local heatPercent = maxBullets > 0 and math.clamp(currentBullets / maxBullets, 0, 1) or 0
+		local yStart = headOnScreen and screenHead.Y or screenRoot.Y
+		local yEnd = yStart + barHeight
+
+		cache.heatOut.Size = Vector2.new(barWidth + 2, barHeight + 2)
+		cache.heatOut.Position = Vector2.new(right + barOffset - 1, yStart - 1)
+		cache.heatOut.Color = (chromaEnabled and Toggles.ChromaHeat and Toggles.ChromaHeat.Value) and rainbowColor
+			or Color3.new(1, 1, 1)
+		cache.heatOut.Visible = true
+
+		local heatFill = barHeight * heatPercent
+		cache.heatBar.Size = Vector2.new(barWidth, heatFill)
+		cache.heatBar.Position = Vector2.new(right + barOffset, yEnd - heatFill)
+		cache.heatBar.Color = heatColor
+		cache.heatBar.Visible = true
+	else
+		cache.heatOut.Visible = false
+		cache.heatBar.Visible = false
+	end
+
+	if Toggles.ShowImpact and Toggles.ShowImpact.Value and stats.impact and stats.impact_limit then
+		local impactText = string.format("Impact: %.0f/%.0f", stats.impact, stats.impact_limit)
+		cache.infoText.Text = impactText
+		cache.infoText.Position = Vector2.new(screenRoot.X, bottomScreen.Y + 4)
+		cache.infoText.Color = impactColor
+		cache.infoText.Size = Options.FontSize.Value - 2
+		cache.infoText.Visible = true
+	elseif Toggles.ShowDistance and Toggles.ShowDistance.Value then
+		local distText = string.format("%.0fm", distance)
+		cache.infoText.Text = distText
+		cache.infoText.Position = Vector2.new(screenRoot.X, bottomScreen.Y + 4)
+		cache.infoText.Color = (chromaEnabled and Toggles.ChromaImpact and Toggles.ChromaImpact.Value) and rainbowColor
+			or Color3.new(1, 1, 1)
+		cache.infoText.Size = Options.FontSize.Value - 2
+		cache.infoText.Visible = true
+	else
+		cache.infoText.Visible = false
+	end
+end
+
+local function snapshotChromaElement(key)
+	if key == "ambient" and not snapshotTaken.ambient then
+		chromaSnapshot.ambient = Lighting.Ambient
+		snapshotTaken.ambient = true
+	elseif key == "outdoorAmbient" and not snapshotTaken.outdoorAmbient then
+		chromaSnapshot.outdoorAmbient = Lighting.OutdoorAmbient
+		snapshotTaken.outdoorAmbient = true
+	elseif key == "fog" and not snapshotTaken.fog then
+		chromaSnapshot.fog = Lighting.FogColor
+		snapshotTaken.fog = true
+	elseif key == "colorShift" and not snapshotTaken.colorShift then
+		pcall(function()
+			local top = Lighting:FindFirstChild("ColorShift_Top")
+			if top then
+				chromaSnapshot.colorShiftTop = top.Value
+			end
+		end)
+		pcall(function()
+			local bottom = Lighting:FindFirstChild("ColorShift_Bottom")
+			if bottom then
+				chromaSnapshot.colorShiftBottom = bottom.Value
+			end
+		end)
+		snapshotTaken.colorShift = true
+	elseif key == "clouds" and not snapshotTaken.clouds then
+		local terrain = workspace:FindFirstChild("Terrain")
+		if terrain then
+			local clouds = terrain:FindFirstChild("Clouds")
+			if clouds and clouds:IsA("Model") then
+				for _, part in ipairs(clouds:GetDescendants()) do
+					if part:IsA("BasePart") then
+						table.insert(chromaSnapshot.clouds, { part = part, color = part.Color })
+					end
+				end
+			end
+		end
+		snapshotTaken.clouds = true
+	elseif key == "camera" and not snapshotTaken.camera then
+		chromaSnapshot.cameraObjects = {}
+		local function collect(obj)
+			for _, child in ipairs(obj:GetChildren()) do
+				local hasColor, color = pcall(function()
+					return child.Color
+				end)
+				if hasColor then
+					table.insert(chromaSnapshot.cameraObjects, { obj = child, prop = "Color", original = color })
+				else
+					local hasBg, bgColor = pcall(function()
+						return child.BackgroundColor3
+					end)
+					if hasBg then
+						table.insert(
+							chromaSnapshot.cameraObjects,
+							{ obj = child, prop = "BackgroundColor3", original = bgColor }
+						)
+					end
+				end
+				collect(child)
+			end
+		end
+		pcall(function()
+			local hasCamBg, camBg = pcall(function()
+				return Camera.BackgroundColor3
+			end)
+			if hasCamBg then
+				table.insert(
+					chromaSnapshot.cameraObjects,
+					{ obj = Camera, prop = "BackgroundColor3", original = camBg }
+				)
+			end
+			collect(Camera)
+		end)
+		snapshotTaken.camera = true
+	end
+end
+
+local function applyWorldChroma(color)
+	if Toggles.ChromaAmbient and Toggles.ChromaAmbient.Value then
+		snapshotChromaElement("ambient")
+		pcall(function()
+			Lighting.Ambient = color
+		end)
+	elseif snapshotTaken.ambient then
+		pcall(function()
+			Lighting.Ambient = chromaSnapshot.ambient
+		end)
+	end
+	if Toggles.ChromaOutdoorAmbient and Toggles.ChromaOutdoorAmbient.Value then
+		snapshotChromaElement("outdoorAmbient")
+		pcall(function()
+			Lighting.OutdoorAmbient = color
+		end)
+	elseif snapshotTaken.outdoorAmbient then
+		pcall(function()
+			Lighting.OutdoorAmbient = chromaSnapshot.outdoorAmbient
+		end)
+	end
+	if Toggles.ChromaFog and Toggles.ChromaFog.Value then
+		snapshotChromaElement("fog")
+		pcall(function()
+			Lighting.FogColor = color
+		end)
+	elseif snapshotTaken.fog then
+		pcall(function()
+			Lighting.FogColor = chromaSnapshot.fog
+		end)
+	end
+	if Toggles.ChromaColorShift and Toggles.ChromaColorShift.Value then
+		snapshotChromaElement("colorShift")
+		pcall(function()
+			local top = Lighting:FindFirstChild("ColorShift_Top")
+			if top then
+				top.Value = color
+			end
+		end)
+		pcall(function()
+			local bottom = Lighting:FindFirstChild("ColorShift_Bottom")
+			if bottom then
+				bottom.Value = color
+			end
+		end)
+	elseif snapshotTaken.colorShift then
+		pcall(function()
+			local top = Lighting:FindFirstChild("ColorShift_Top")
+			if top then
+				top.Value = chromaSnapshot.colorShiftTop
+			end
+		end)
+		pcall(function()
+			local bottom = Lighting:FindFirstChild("ColorShift_Bottom")
+			if bottom then
+				bottom.Value = chromaSnapshot.colorShiftBottom
+			end
+		end)
+	end
+	if Toggles.ChromaClouds and Toggles.ChromaClouds.Value then
+		snapshotChromaElement("clouds")
+		for _, entry in ipairs(chromaSnapshot.clouds) do
+			pcall(function()
+				entry.part.Color = color
+			end)
+		end
+	elseif snapshotTaken.clouds then
+		for _, entry in ipairs(chromaSnapshot.clouds) do
+			pcall(function()
+				entry.part.Color = entry.color
+			end)
+		end
+	end
+	if Toggles.ChromaCamera and Toggles.ChromaCamera.Value then
+		snapshotChromaElement("camera")
+		for _, entry in ipairs(chromaSnapshot.cameraObjects) do
+			if entry.prop == "Color" then
+				pcall(function()
+					entry.obj.Color = color
+				end)
+			else
+				pcall(function()
+					entry.obj.BackgroundColor3 = color
+				end)
+			end
+		end
+	elseif snapshotTaken.camera then
+		for _, entry in ipairs(chromaSnapshot.cameraObjects) do
+			if entry.prop == "Color" then
+				pcall(function()
+					entry.obj.Color = entry.original
+				end)
+			else
+				pcall(function()
+					entry.obj.BackgroundColor3 = entry.original
+				end)
+			end
+		end
+	end
+end
+
+local function restoreAllChroma()
+	if snapshotTaken.ambient then
+		pcall(function()
+			Lighting.Ambient = chromaSnapshot.ambient
+		end)
+	end
+	if snapshotTaken.outdoorAmbient then
+		pcall(function()
+			Lighting.OutdoorAmbient = chromaSnapshot.outdoorAmbient
+		end)
+	end
+	if snapshotTaken.fog then
+		pcall(function()
+			Lighting.FogColor = chromaSnapshot.fog
+		end)
+	end
+	if snapshotTaken.colorShift then
+		pcall(function()
+			local top = Lighting:FindFirstChild("ColorShift_Top")
+			if top then
+				top.Value = chromaSnapshot.colorShiftTop
+			end
+		end)
+		pcall(function()
+			local bottom = Lighting:FindFirstChild("ColorShift_Bottom")
+			if bottom then
+				bottom.Value = chromaSnapshot.colorShiftBottom
+			end
+		end)
+	end
+	if snapshotTaken.clouds then
+		for _, entry in ipairs(chromaSnapshot.clouds) do
+			pcall(function()
+				entry.part.Color = entry.color
+			end)
+		end
+	end
+	if snapshotTaken.camera then
+		for _, entry in ipairs(chromaSnapshot.cameraObjects) do
+			if entry.prop == "Color" then
+				pcall(function()
+					entry.obj.Color = entry.original
+				end)
+			else
+				pcall(function()
+					entry.obj.BackgroundColor3 = entry.original
+				end)
+			end
+		end
+	end
+	for k in pairs(snapshotTaken) do
+		snapshotTaken[k] = false
+	end
+	chromaSnapshot.clouds = {}
+	chromaSnapshot.cameraObjects = {}
+end
+
+RunService.RenderStepped:Connect(function()
+	local chromaNow = Toggles["Eli's mode <3 ;3"] and Toggles["Eli's mode <3 ;3"].Value
+	if chromaNow and not chromaWasEnabled then
+	elseif not chromaNow and chromaWasEnabled then
+		restoreAllChroma()
+	end
+	chromaWasEnabled = chromaNow
+
+	local rainbowColor
+	if chromaNow then
+		rainbowHue = (rainbowHue + (Options.ChromaSpeed.Value * 0.005)) % 1
+		rainbowColor = Color3.fromHSV(rainbowHue, 1, 1)
+		applyWorldChroma(rainbowColor)
+	else
+		rainbowColor = nil
+	end
+
+	local fov = Options.FOV.Value
+	FOVCircle.Radius = fov
+	FOVCircle.Position = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+	FOVCircle.Visible = Toggles.ShowFOV.Value
+	if chromaNow and Toggles.ChromaFOVCircle and Toggles.ChromaFOVCircle.Value then
+		FOVCircle.Color = rainbowColor
+	else
+		FOVCircle.Color = Options.FOVColor.Value or Color3.new(1, 1, 1)
+	end
+
+	performAutoAttack()
+	updateParryHurtboxSize()
+	updateHitboxExtender()
+	performBunnyHop()
+	performAutoDash()
+
+	if Toggles.ESPEnabled.Value then
+		for _, player in ipairs(Players:GetPlayers()) do
+			if player == LocalPlayer then
+				continue
+			end
+			updatePlayerESP(player, rainbowColor or Color3.new(1, 1, 1))
+		end
+
+		for player, _ in pairs(espCache) do
+			if player ~= LocalPlayer and not player.Parent then
+				clearPlayerESP(player)
+			end
+		end
+	else
+		for _, cache in pairs(espCache) do
+			for _, drawing in pairs(cache) do
+				if type(drawing) == "table" then
+					for _, d in pairs(drawing) do
+						if d.Visible ~= nil then
+							d.Visible = false
+						end
+					end
+				elseif drawing.Visible ~= nil then
+					drawing.Visible = false
+				end
+			end
+		end
+	end
+
+	if not Toggles.AimlockEnabled.Value then
+		AimPart = nil
+		StatusLabel:SetText("Status: Disabled")
+		return
+	end
+
+	local shouldAim = false
+	local mode = Options.KeybindMode.Value
+	if mode == "Hold" then
+		shouldAim = Options.AimlockKey:GetState()
+	elseif mode == "Toggle" then
+		shouldAim = AimlockToggleState
+	end
+
+	StatusLabel:SetText(shouldAim and "Status: Active" or "Status: Inactive")
+
+	if not shouldAim then
+		AimPart = nil
+		return
+	end
+
+	local part = findClosestAimTarget()
+	AimPart = part
+
+	if AimPart then
+		local smooth = Options.Smoothing.Value
+		local lookAt = CFrame.new(Camera.CFrame.Position, AimPart.Position)
+		Camera.CFrame = Camera.CFrame:Lerp(lookAt, smooth)
+	end
+end)
+
+SaveManager:LoadAutoloadConfig()
