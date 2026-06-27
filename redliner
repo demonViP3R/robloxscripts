@@ -495,6 +495,7 @@ HitboxGroup:AddSlider("HitboxExtenderMultiplier", {
 	Suffix = "x",
 })
 
+-- ================== ESP TAB ==================
 local ESPGroup = Tabs.ESP:AddLeftGroupbox("Player ESP")
 ESPGroup:AddToggle("ESPEnabled", { Text = "Enabled", Default = false })
 ESPGroup:AddToggle("ESPTeamCheck", { Text = "Team Check", Default = true })
@@ -512,7 +513,7 @@ ESPGroup:AddToggle("ShowHealth", { Text = "Health Bar", Default = true })
 ESPGroup:AddToggle("ShowHeat", { Text = "Heat Bar", Default = true })
 ESPGroup:AddToggle("ShowImpact", { Text = "Impact Bar", Default = true })
 
-local CG = Tabs.ESP:AddRightGroupbox("Colors")
+local CG = Tabs.ESP:AddRightGroupbox("Colors (Enemy)")
 CG:AddLabel("Box"):AddColorPicker("BoxColor", { Default = Color3.new(1, 1, 1), Title = "Box" })
 CG:AddLabel("Outline"):AddColorPicker("OutlineColor", { Default = Color3.new(0, 0, 0), Title = "Outline" })
 CG:AddLabel("Tracer"):AddColorPicker("TracerColor", { Default = Color3.new(1, 1, 1), Title = "Tracer" })
@@ -590,6 +591,24 @@ DG2:AddDivider()
 DG2:AddLabel("Chroma")
 DG2:AddToggle("ChromaEnabled", { Text = "Enable ELI'S MODE <3 ;3", Default = false })
 DG2:AddSlider("ChromaSpeed", { Text = "Speed", Default = 1, Min = 0.1, Max = 10, Rounding = 1, Suffix = "x" })
+
+-- NEW: Team Colors groupbox (left)
+local TeamColorGroup = Tabs.ESP:AddLeftGroupbox("Team Colors")
+TeamColorGroup:AddToggle("TeamColors", { Text = "Enable Team Colors", Default = true, Tooltip = "Use separate colors for teammates" })
+TeamColorGroup:AddDivider()
+TeamColorGroup:AddLabel("Teammate Colors")
+TeamColorGroup:AddLabel("Box"):AddColorPicker("TeammateBoxColor", { Default = Color3.new(0, 0.8, 0.8), Title = "Team Box" })
+TeamColorGroup:AddLabel("Outline"):AddColorPicker("TeammateOutlineColor", { Default = Color3.new(0, 0.2, 0.2), Title = "Team Outline" })
+TeamColorGroup:AddLabel("Tracer"):AddColorPicker("TeammateTracerColor", { Default = Color3.new(0, 0.8, 0.8), Title = "Team Tracer" })
+TeamColorGroup:AddLabel("Name"):AddColorPicker("TeammateNameColor", { Default = Color3.new(0, 1, 1), Title = "Team Name" })
+TeamColorGroup:AddDivider()
+TeamColorGroup:AddLabel("Team Health Colors")
+TeamColorGroup:AddLabel("Full"):AddColorPicker("TeammateHealthFullColor", { Default = Color3.new(0, 1, 0.5), Title = "Team HP Full" })
+TeamColorGroup:AddLabel("Mid"):AddColorPicker("TeammateHealthMidColor", { Default = Color3.fromRGB(255, 200, 100), Title = "Team HP Mid" })
+TeamColorGroup:AddLabel("Low"):AddColorPicker("TeammateHealthLowColor", { Default = Color3.new(1, 0.5, 0), Title = "Team HP Low" })
+TeamColorGroup:AddDivider()
+TeamColorGroup:AddLabel("Heat"):AddColorPicker("TeammateHeatColor", { Default = Color3.fromRGB(255, 150, 50), Title = "Team Heat" })
+TeamColorGroup:AddLabel("Impact"):AddColorPicker("TeammateImpactColor", { Default = Color3.new(0.4, 0.8, 1), Title = "Team Impact" })
 
 local ChG = Tabs.ESP:AddLeftGroupbox("ESP Chroma Elements")
 ChG:AddToggle("ChromaBox", { Text = "Box", Default = true })
@@ -752,6 +771,74 @@ table.insert(
 	end)
 )
 
+-- ===========================
+-- TEAM LOGIC WITH FALLBACK (MODIFIED – only change in the whole script)
+-- ===========================
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local MatchTeams = ReplicatedStorage:FindFirstChild("ReadOnly") and ReplicatedStorage.ReadOnly:FindFirstChild("Match") and ReplicatedStorage.ReadOnly.Match:FindFirstChild("Teams")
+if not MatchTeams then
+	warn("Match.Teams not found; will fall back to Players.team_id attributes")
+end
+
+local function getPlayerTeamIdFromPlayers(player)
+	local playersFolder = ReplicatedStorage:FindFirstChild("ReadOnly") and ReplicatedStorage.ReadOnly:FindFirstChild("Match") and ReplicatedStorage.ReadOnly.Match:FindFirstChild("Players")
+	if not playersFolder then
+		return nil
+	end
+	local playerFolder = playersFolder:FindFirstChild(tostring(player.UserId))
+	if playerFolder and playerFolder:IsA("Folder") then
+		local teamId = playerFolder:GetAttribute("team_id")
+		if teamId ~= nil then
+			return teamId
+		end
+	end
+	return nil
+end
+
+local function getMyTeamFolder()
+	if not MatchTeams then return nil end
+	local myId = tostring(LocalPlayer.UserId)
+	local team1 = MatchTeams:FindFirstChild("Team_1")
+	if team1 and team1:FindFirstChild(myId) then
+		return team1
+	end
+	local team2 = MatchTeams:FindFirstChild("Team_2")
+	if team2 and team2:FindFirstChild(myId) then
+		return team2
+	end
+	return nil
+end
+
+-- ======== FIXED isTeammate FUNCTION ========
+local function isTeammate(player)
+	-- 1. Use the game's custom team system (if available)
+	if MatchTeams then
+		local myTeam = getMyTeamFolder()
+		if myTeam then
+			local userIdStr = tostring(player.UserId)
+			-- Try both StringValue and IntValue objects (many games use IntValues)
+			return myTeam:FindFirstChild(userIdStr) ~= nil
+				or myTeam:FindFirstChild(player.UserId) ~= nil
+		end
+	end
+
+	-- 2. Fallback to team_id attributes
+	local myTeamId = getPlayerTeamIdFromPlayers(LocalPlayer)
+	local theirTeamId = getPlayerTeamIdFromPlayers(player)
+	if myTeamId and theirTeamId then
+		return theirTeamId == myTeamId
+	end
+
+	-- 3. Final fallback: Roblox Teams service
+	if LocalPlayer.Team and player.Team then
+		return LocalPlayer.Team == player.Team
+	end
+
+	-- If nothing works, assume enemy
+	return false
+end
+-- ==========================================
+
 local function getTargetPart(entity, partName)
 	local hurtboxes = entity:FindFirstChild("Hurtboxes")
 	if not hurtboxes then
@@ -763,13 +850,6 @@ local function getTargetPart(entity, partName)
 		return hurtboxes:FindFirstChild("HumanoidRootPart_Hurtbox")
 	end
 	return nil
-end
-
-local function isTeammate(player)
-	if player.Team and LocalPlayer.Team and player.Team == LocalPlayer.Team then
-		return true
-	end
-	return false
 end
 
 local function isVisible(targetPart)
@@ -1384,10 +1464,18 @@ local function newD(kind, props)
 	return d
 end
 
-local function healthCol(pct)
-	local full = Options.HealthFullColor and Options.HealthFullColor.Value or Color3.new(0, 1, 0)
-	local mid = Options.HealthMidColor and Options.HealthMidColor.Value or Color3.fromRGB(255, 200, 0)
-	local low = Options.HealthLowColor and Options.HealthLowColor.Value or Color3.new(1, 0, 0)
+-- Health color function with support for enemy/team colors
+local function healthColForTeam(pct, useTeam)
+	local full, mid, low
+	if useTeam then
+		full = Options.TeammateHealthFullColor and Options.TeammateHealthFullColor.Value or Color3.new(0, 1, 0.5)
+		mid = Options.TeammateHealthMidColor and Options.TeammateHealthMidColor.Value or Color3.fromRGB(255, 200, 100)
+		low = Options.TeammateHealthLowColor and Options.TeammateHealthLowColor.Value or Color3.new(1, 0.5, 0)
+	else
+		full = Options.HealthFullColor and Options.HealthFullColor.Value or Color3.new(0, 1, 0)
+		mid = Options.HealthMidColor and Options.HealthMidColor.Value or Color3.fromRGB(255, 200, 0)
+		low = Options.HealthLowColor and Options.HealthLowColor.Value or Color3.new(1, 0, 0)
+	end
 	if pct >= 0.5 then
 		return mid:Lerp(full, (pct - 0.5) * 2)
 	else
@@ -1535,7 +1623,9 @@ local function updatePlayerESP(player, chromaColor)
 		return
 	end
 
-	if Toggles.ESPTeamCheck and Toggles.ESPTeamCheck.Value and isTeammate(player) then
+	-- Team check for ESP
+	local isTeam = isTeammate(player)
+	if Toggles.ESPTeamCheck and Toggles.ESPTeamCheck.Value and isTeam then
 		clearESP(player)
 		return
 	end
@@ -1635,21 +1725,28 @@ local function updatePlayerESP(player, chromaColor)
 	local barXOff = Options.BarXOffset and Options.BarXOffset.Value or 5
 
 	local chroma = Toggles.ChromaEnabled and Toggles.ChromaEnabled.Value
-	local function cc(chKey, fallback)
-		if chroma and Toggles[chKey] and Toggles[chKey].Value then
+	local useTeamColors = Toggles.TeamColors and Toggles.TeamColors.Value and isTeam
+
+	-- Helper to get a color based on team or enemy
+	local function getColor(chromaKey, enemyOption, teamOption)
+		if chroma and Toggles[chromaKey] and Toggles[chromaKey].Value then
 			return chromaColor
 		end
-		return Options[fallback] and Options[fallback].Value or Color3.new(1, 1, 1)
+		if useTeamColors then
+			return Options[teamOption] and Options[teamOption].Value or Color3.new(1, 1, 1)
+		else
+			return Options[enemyOption] and Options[enemyOption].Value or Color3.new(1, 1, 1)
+		end
 	end
 
-	local boxCol = cc("ChromaBox", "BoxColor")
-	local outCol = cc("ChromaOutline", "OutlineColor")
-	local trCol = cc("ChromaTracer", "TracerColor")
-	local nmCol = cc("ChromaName", "NameColor")
+	local boxCol = getColor("ChromaBox", "BoxColor", "TeammateBoxColor")
+	local outCol = getColor("ChromaOutline", "OutlineColor", "TeammateOutlineColor")
+	local trCol = getColor("ChromaTracer", "TracerColor", "TeammateTracerColor")
+	local nmCol = getColor("ChromaName", "NameColor", "TeammateNameColor")
 	local hpCol = (chroma and Toggles.ChromaHealth and Toggles.ChromaHealth.Value) and chromaColor
-		or healthCol(hp / hpMax)
-	local htCol = cc("ChromaHeat", "HeatColor")
-	local imCol = cc("ChromaImpact", "ImpactColor")
+		or healthColForTeam(hp / hpMax, useTeamColors)
+	local htCol = getColor("ChromaHeat", "HeatColor", "TeammateHeatColor")
+	local imCol = getColor("ChromaImpact", "ImpactColor", "TeammateImpactColor")
 
 	local thick = Options.BoxThickness and Options.BoxThickness.Value or 1.5
 	local oThick = Options.OutlineThickness and Options.OutlineThickness.Value or 3
